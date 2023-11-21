@@ -1,0 +1,2 @@
+[console_scripts]
+gcguard = gcguard.cli:main
