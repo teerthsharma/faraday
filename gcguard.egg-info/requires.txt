@@ -1,7 +1,0 @@
-numpy>=1.21
-scipy>=1.7
-matplotlib>=3.5
-
-[dev]
-pytest>=7.0
-pytest-cov>=3.0
