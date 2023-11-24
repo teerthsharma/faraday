@@ -9,8 +9,13 @@ E and H fields of the same cavity mode share the same topology,
 but their SIGNATURES are different — the God Tensor learns the mapping.
 """
 
+from __future__ import annotations
+
 import numpy as np
-from typing import Dict, List, Tuple, Optional
+
+from faraday.logging import get_logger
+
+log = get_logger(__name__)
 
 
 def field_to_pointcloud(
@@ -40,17 +45,21 @@ def field_to_pointcloud(
 
     if add_phase:
         phase = np.angle(field)
-        points = np.column_stack([
-            x_coords / nx,
-            y_coords / ny,
-            (phase[mask] + np.pi) / (2 * np.pi),  # normalize phase to [0,1]
-        ])
+        points = np.column_stack(
+            [
+                x_coords / nx,
+                y_coords / ny,
+                (phase[mask] + np.pi) / (2 * np.pi),  # normalize phase to [0,1]
+            ]
+        )
     else:
-        points = np.column_stack([
-            x_coords / nx,
-            y_coords / ny,
-            mag[mask] / (mag.max() + 1e-10),
-        ])
+        points = np.column_stack(
+            [
+                x_coords / nx,
+                y_coords / ny,
+                mag[mask] / (mag.max() + 1e-10),
+            ]
+        )
     return points
 
 
@@ -85,7 +94,7 @@ def compute_barcodes(
             if len(lifetimes) > 0:
                 # Persistent features: bars significantly longer than median gap
                 threshold = np.median(lifetimes) if len(lifetimes) > 1 else 0
-                betti.append(int(len(lifetimes[lifetimes > threshold])))
+                betti.append(len(lifetimes[lifetimes > threshold]))
             else:
                 betti.append(0)
         else:
@@ -95,19 +104,23 @@ def compute_barcodes(
         betti.append(0)
 
     return {
-        "betti_0": betti[0],          # connected components
-        "betti_1": betti[1],          # loops / holes
+        "betti_0": betti[0],  # connected components
+        "betti_1": betti[1],  # loops / holes
         "num_h0_bars": len(diagrams[0]),
         "num_h1_bars": len(diagrams[1]) if len(diagrams) > 1 else 0,
-        "h0_lifetimes": [float(x) for x in (diagrams[0][:, 1] - diagrams[0][:, 0]) if not np.isinf(x)],
-        "h1_lifetimes": [float(x) for x in (diagrams[1][:, 1] - diagrams[1][:, 0]) if not np.isinf(x)] if len(diagrams) > 1 else [],
+        "h0_lifetimes": [
+            float(x) for x in (diagrams[0][:, 1] - diagrams[0][:, 0]) if not np.isinf(x)
+        ],
+        "h1_lifetimes": [
+            float(x) for x in (diagrams[1][:, 1] - diagrams[1][:, 0]) if not np.isinf(x)
+        ]
+        if len(diagrams) > 1
+        else [],
         "diagrams": [dgm.tolist() for dgm in diagrams],
     }
 
 
-def topological_fingerprint(
-    field: np.ndarray, threshold: float = 0.1
-) -> Dict:
+def topological_fingerprint(field: np.ndarray, threshold: float = 0.1) -> Dict:
     """
     Full topological analysis of an EM field distribution.
     Returns Betti numbers, barcode statistics, and field metrics.
@@ -127,7 +140,7 @@ def topological_fingerprint(
     mag = np.abs(field)
 
     total_energy = float(np.sum(mag**2))
-    peak_energy = float(np.sum(mag[mag > threshold * mag.max()]**2))
+    peak_energy = float(np.sum(mag[mag > threshold * mag.max()] ** 2))
     confinement_ratio = peak_energy / (total_energy + 1e-10)
 
     return {
@@ -144,8 +157,8 @@ def topological_fingerprint(
         "num_grid_points": int(np.sum(mag > threshold * mag.max())),
         # Topological score: more holes with longer lifetimes = higher score
         "topological_score": float(
-            barcodes.get("betti_1", 0) * np.mean(barcodes.get("h1_lifetimes", [0])) +
-            barcodes.get("betti_0", 0) * np.mean(barcodes.get("h0_lifetimes", [0]))
+            barcodes.get("betti_1", 0) * np.mean(barcodes.get("h1_lifetimes", [0]))
+            + barcodes.get("betti_0", 0) * np.mean(barcodes.get("h0_lifetimes", [0]))
         ),
         "diagrams": barcodes.get("diagrams", []),
     }
@@ -182,12 +195,13 @@ def coupled_fingerprint(
 
     # Earth Mover's Distance between |E| and |S| point clouds
     # Sample points from both fields at same grid positions
-    e_pts = field_to_pointcloud(e_field, threshold, add_phase=False)   # (x, y, |E|)
-    h_pts = field_to_pointcloud(h_field, threshold, add_phase=False)   # (x, y, |H|)
+    e_pts = field_to_pointcloud(e_field, threshold, add_phase=False)  # (x, y, |E|)
+    h_pts = field_to_pointcloud(h_field, threshold, add_phase=False)  # (x, y, |H|)
 
     if len(e_pts) >= 5 and len(h_pts) >= 5:
         try:
             from scipy.stats import wasserstein_distance_nd
+
             # EMD between |E| and |H| distributions (project to 1D for simplicity)
             e_flat = e_pts[:, 2]  # |E| values
             h_flat = h_pts[:, 2]  # |H| values

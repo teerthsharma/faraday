@@ -1,0 +1,14 @@
+include LICENSE
+include README.md
+include CHANGELOG.md
+include CONTRIBUTING.md
+include CODE_OF_CONDUCT.md
+
+recursive-include faraday *.py
+recursive-include tests *.py
+recursive-include docs *
+recursive-exclude __pycache__
+recursive-exclude *.pyc
+recursive-exclude *.pyo
+global-exclude *.pyo
+global-exclude .git*

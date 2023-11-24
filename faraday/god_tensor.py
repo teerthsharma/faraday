@@ -21,31 +21,31 @@ Usage
     pred = gt.predict(w=2.0, h=1.5)           # predict for new geometry
 """
 
-import numpy as np
-from typing import Dict, List, Tuple, Optional, Callable
-from dataclasses import dataclass, field
-import json
-import math
+from __future__ import annotations
 
-from .em_solver import CavityGeometry, CavityShape, solve_cavity_modes, WaveSuperposer
-from .barcode import (
-    field_to_pointcloud,
-    compute_barcodes,
-    topological_fingerprint,
-    coupled_fingerprint,
-)
-from .manifold_projector import ManifoldProjector, embed_barcode, embed_fingerprint
+from dataclasses import dataclass, field
+from typing import Dict, List, Tuple, Optional, Any
+
+import numpy as np
+
+from faraday.barcode import coupled_fingerprint
+from faraday.em_solver import CavityGeometry, CavityShape, solve_cavity_modes
+from faraday.logging import get_logger
+from faraday.manifold_projector import ManifoldProjector, embed_fingerprint
+
+log = get_logger(__name__)
 
 
 @dataclass
 class TrainingSample:
     """One training sample: a geometry + its E and H field signatures."""
+
     geometry_params: Tuple[float, ...]  # e.g. (w, h) or (r,)
     e_fingerprint: Dict
     h_fingerprint: Dict
     e_embedding: np.ndarray  # manifold embedding of E fingerprint
     h_embedding: np.ndarray  # manifold embedding of H fingerprint
-    k_values: List[float]     # cavity eigenmode wave numbers
+    k_values: List[float]  # cavity eigenmode wave numbers
 
     def to_dict(self) -> Dict:
         return {
@@ -70,6 +70,7 @@ class GodTensor:
 
     This fixed point T is the God Tensor — it IS the unified field.
     """
+
     n_geometries: int = 50
     samples: List[TrainingSample] = field(default_factory=list)
     projector_e: ManifoldProjector = field(
@@ -120,7 +121,7 @@ class GodTensor:
             try:
                 mode_data = solve_cavity_modes(geom, nx=nx, ny=ny, num_modes=num_modes)
             except Exception as e:
-                print(f"  Warning: geometry {params} failed — {e}")
+                log.warning("geometry_solve_failed", params=params, error=str(e))
                 continue
 
             # Use the dominant (lowest k) mode for fingerprinting
@@ -153,10 +154,11 @@ class GodTensor:
             )
             self.samples.append(sample)
 
+            log.info("sample_collected", i=i, params=params, valid=len(self.samples))
             if (i + 1) % 20 == 0:
-                print(f"  Collected {i+1}/{self.n_geometries} samples...")
+                log.info("collection_progress", collected=i + 1, total=self.n_geometries)
 
-        print(f"  ✓ Collected {len(self.samples)} valid training samples")
+        log.info("training_data_collected", n_samples=len(self.samples))
 
     def learn_T(self) -> np.ndarray:
         """
@@ -175,7 +177,7 @@ class GodTensor:
             raise ValueError("Need at least 2 training samples")
 
         E = np.array([s.e_embedding for s in self.samples])  # (n, 50)
-        H = np.array([s.h_embedding for s in self.samples])   # (n, 50)
+        H = np.array([s.h_embedding for s in self.samples])  # (n, 50)
 
         # First project to latent space
         E_latent = np.array([self.projector_e.encode(e) for e in E])
@@ -186,16 +188,17 @@ class GodTensor:
         # →  T = H_latent.T @ E_latent @ (E_latent.T @ E_latent)^-1
         # Using lstsq for numerical stability: T @ E_latent = H_latent
         from scipy.linalg import lstsq
+
         T_raw, residuals, rank, s = lstsq(E_latent, H_latent)
         T = T_raw.T  # (latent, latent)
 
         self.T_matrix = T
-        print(f"  ✓ Learned T matrix: shape {T.shape}")
-
         # Verify: T @ e should reconstruct h
         H_recon = E_latent @ T.T
         error = float(np.mean(np.abs(H_recon - H_latent)))
-        print(f"  ✓ Reconstruction error: {error:.6f}")
+
+        log.info("t_matrix_learned", shape=T.shape, rank=rank)
+        log.info("t_reconstruction_error", error=error)
 
         return T
 
@@ -232,7 +235,7 @@ class GodTensor:
         x = np.mean(E_latent_all, axis=0)
         x = x / (np.linalg.norm(x) + 1e-10)
 
-        print(f"  Iterating to fixed point (max {iters} iters, tol={tol})...")
+        log.info("fixed_point_iteration_start", iters=iters, tol=tol, latent_dim=latent_dim)
 
         for i in range(iters):
             x_new = T @ x
@@ -241,17 +244,19 @@ class GodTensor:
                 x_new = x_new / norm
 
             delta = float(np.linalg.norm(x_new - x))
-            self.convergence_history.append({"iter": i, "delta": delta, "norm": float(norm)})
+            self.convergence_history.append(
+                {"iter": i, "delta": delta, "norm": float(norm)}
+            )
 
             if delta < tol:
-                print(f"  ✓ Converged at iter {i}, delta={delta:.2e}")
+                log.info("fixed_point_converged", iter=i, delta=delta)
                 self.fixed_point_converged = True
                 break
 
             x = x_new
 
             if (i + 1) % 100 == 0:
-                print(f"    iter {i+1}: delta={delta:.6e}")
+                log.debug("fixed_point_progress", iter=i + 1, delta=delta)
 
         self.god_tensor = x
 
@@ -259,22 +264,28 @@ class GodTensor:
         Tx = T @ x
         TTx = T @ Tx
         verification_error = float(np.linalg.norm(Tx - TTx))
-        print(f"  ✓ Fixed point verification: ||T(x) - T(T(x))|| = {verification_error:.6e}")
 
         # Also verify: both E and H converge to same point under T
-        e_latent = np.array([self.projector_e.encode(s.e_embedding) for s in self.samples])
-        h_latent = np.array([self.projector_h.encode(s.h_embedding) for s in self.samples])
-
+        e_latent = np.array(
+            [self.projector_e.encode(s.e_embedding) for s in self.samples]
+        )
+        h_latent = np.array(
+            [self.projector_h.encode(s.h_embedding) for s in self.samples]
+        )
         e_under_T = e_latent @ T.T
-        e_under_T_normed = e_under_T / (np.linalg.norm(e_under_T, axis=1, keepdims=True) + 1e-10)
+        e_under_T_normed = e_under_T / (
+            np.linalg.norm(e_under_T, axis=1, keepdims=True) + 1e-10
+        )
         h_under_T = h_latent @ T.T
-        h_under_T_normed = h_under_T / (np.linalg.norm(h_under_T, axis=1, keepdims=True) + 1e-10)
-
-        # Distance from god_tensor
+        h_under_T_normed = h_under_T / (
+            np.linalg.norm(h_under_T, axis=1, keepdims=True) + 1e-10
+        )
         e_dist = np.linalg.norm(e_under_T_normed - x, axis=1)
         h_dist = np.linalg.norm(h_under_T_normed - x, axis=1)
-        print(f"  ✓ E fields avg distance to fixed point: {float(np.mean(e_dist)):.6f}")
-        print(f"  ✓ H fields avg distance to fixed point: {float(np.mean(h_dist)):.6f}")
+
+        log.info("fixed_point_verified", verification_error=verification_error)
+        log.info("e_convergence_to_fixed_point", avg_dist=float(np.mean(e_dist)))
+        log.info("h_convergence_to_fixed_point", avg_dist=float(np.mean(h_dist)))
 
         return x
 
@@ -301,35 +312,52 @@ class GodTensor:
         """
         Compute the 'god score' — how well the God Tensor unifies E and H.
 
-        Score = 1 - mean(||T(e_i) - god|| + ||T(h_i) - god||) / 2
-        where god = fixed point. Higher = better coupling.
+        Score = exp(-mean(||T(e_i) - god|| + ||T(h_i) - god||) / 2)
+
+        Using an exponential keeps the score bounded in [0, 1] regardless of
+        the geometry of the embedding space or the number of samples.
+        ``exp(-d)`` decays from 1 (d=0, perfect coupling) toward 0 (d→∞).
         """
         if self.god_tensor is None:
             return 0.0
 
         god = self.god_tensor
-        e_latent = np.array([self.projector_e.encode(s.e_embedding) for s in self.samples])
-        h_latent = np.array([self.projector_h.encode(s.h_embedding) for s in self.samples])
+        e_latent = np.array(
+            [self.projector_e.encode(s.e_embedding) for s in self.samples]
+        )
+        h_latent = np.array(
+            [self.projector_h.encode(s.h_embedding) for s in self.samples]
+        )
 
         e_under_T = e_latent @ self.T_matrix.T
         h_under_T = h_latent @ self.T_matrix.T
 
-        e_under_T = e_under_T / (np.linalg.norm(e_under_T, axis=1, keepdims=True) + 1e-10)
-        h_under_T = h_under_T / (np.linalg.norm(h_under_T, axis=1, keepdims=True) + 1e-10)
+        e_under_T = e_under_T / (
+            np.linalg.norm(e_under_T, axis=1, keepdims=True) + 1e-10
+        )
+        h_under_T = h_under_T / (
+            np.linalg.norm(h_under_T, axis=1, keepdims=True) + 1e-10
+        )
 
         e_dists = np.linalg.norm(e_under_T - god, axis=1)
         h_dists = np.linalg.norm(h_under_T - god, axis=1)
 
-        score = 1.0 - float(np.mean(e_dists + h_dists) / 2)
+        score = float(np.exp(-np.mean(e_dists + h_dists) / 2))
         return score
 
     def summary(self) -> Dict:
         """Return a human-readable summary of the God Tensor."""
         return {
             "n_samples": len(self.samples),
-            "T_matrix_shape": self.T_matrix.shape if self.T_matrix is not None else None,
-            "god_tensor_shape": self.god_tensor.shape if self.god_tensor is not None else None,
+            "T_matrix_shape": self.T_matrix.shape
+            if self.T_matrix is not None
+            else None,
+            "god_tensor_shape": self.god_tensor.shape
+            if self.god_tensor is not None
+            else None,
             "converged": self.fixed_point_converged,
-            "final_delta": self.convergence_history[-1]["delta"] if self.convergence_history else None,
+            "final_delta": self.convergence_history[-1]["delta"]
+            if self.convergence_history
+            else None,
             "god_score": self.god_score(),
         }

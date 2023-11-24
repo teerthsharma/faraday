@@ -11,9 +11,16 @@ This polynomial encodes the ENTIRE topological structure as a vector.
 The God Tensor operates on these embeddings, not raw barcodes.
 """
 
-import numpy as np
-from typing import Dict, List, Tuple, Optional
+from __future__ import annotations
+
 import math
+from typing import Dict, List, Optional, Tuple
+
+import numpy as np
+
+from faraday.logging import get_logger
+
+log = get_logger(__name__)
 
 
 def barcode_to_coefficients(
@@ -52,7 +59,8 @@ def barcode_from_field(
     Extract barcode directly from a 2D field.
     Used for quick signature extraction without full fingerprint.
     """
-    from .barcode import field_to_pointcloud, compute_barcodes
+    from .barcode import compute_barcodes, field_to_pointcloud
+
     points = field_to_pointcloud(field, threshold)
     if len(points) < 10:
         return []
@@ -104,7 +112,13 @@ def embed_fingerprint(fp: Dict, dim: int = 50) -> np.ndarray:
     # H0 lifetime stats (indices 0-9)
     h0_lt = fp.get("h0_lifetimes", [])
     if h0_lt:
-        stats = [np.mean(h0_lt), np.std(h0_lt), np.max(h0_lt), np.min(h0_lt), len(h0_lt)]
+        stats = [
+            np.mean(h0_lt),
+            np.std(h0_lt),
+            np.max(h0_lt),
+            np.min(h0_lt),
+            len(h0_lt),
+        ]
     else:
         stats = [0.0] * 5
     for i, s in enumerate(stats[:5]):
@@ -113,7 +127,13 @@ def embed_fingerprint(fp: Dict, dim: int = 50) -> np.ndarray:
     # H1 lifetime stats (indices 10-19)
     h1_lt = fp.get("h1_lifetimes", [])
     if h1_lt:
-        stats = [np.mean(h1_lt), np.std(h1_lt), np.max(h1_lt), np.min(h1_lt), len(h1_lt)]
+        stats = [
+            np.mean(h1_lt),
+            np.std(h1_lt),
+            np.max(h1_lt),
+            np.min(h1_lt),
+            len(h1_lt),
+        ]
     else:
         stats = [0.0] * 5
     for i, s in enumerate(stats[:5]):
@@ -273,12 +293,14 @@ class ManifoldProjector:
                 d_h = d_recon @ self.decoder_weights
                 d_h[h == 0] = 0  # ReLU gradient
 
-                self.encoder_weights -= lr * (d_h.T @ batch).T / len(batch)
-                self.decoder_weights -= lr * (d_recon.T @ h).T / len(batch)
+                # dL/dW_enc = (dL/dh).T @ x  →  (16, n) @ (n, 50) = (16, 50)
+                self.encoder_weights -= lr * (d_h.T @ batch) / len(batch)
+                # dL/dW_dec = (dL/dRecon).T @ h  →  (50, n) @ (n, 16) = (50, 16)
+                self.decoder_weights -= lr * (d_recon.T @ h) / len(batch)
 
             losses.append(float(epoch_loss))
             if verbose and (epoch + 1) % 20 == 0:
-                print(f"  Epoch {epoch+1}/{epochs} — MSE: {losses[-1]:.6f}")
+                log.info("manifold_projector_fit_progress", epoch=epoch + 1, epochs=epochs, loss=losses[-1])
 
         self.is_trained = True
         return losses

@@ -9,15 +9,18 @@ we interpolate the E and H embeddings from the training manifold,
 then project back to barcode space for visualization.
 """
 
-import numpy as np
-from typing import Dict, List, Tuple, Optional
-import json
+from __future__ import annotations
+
 import math
 
-from .god_tensor import GodTensor, TrainingSample
-from .em_solver import CavityGeometry, CavityShape, solve_cavity_modes
-from .barcode import coupled_fingerprint, topological_fingerprint
-from .manifold_projector import embed_fingerprint
+import numpy as np
+
+from faraday.barcode import coupled_fingerprint
+from faraday.em_solver import CavityGeometry, CavityShape, solve_cavity_modes
+from faraday.god_tensor import GodTensor
+from faraday.logging import get_logger
+
+log = get_logger(__name__)
 
 
 def predict_eh_barcode(
@@ -54,7 +57,7 @@ def predict_eh_barcode(
     for sample in gt.samples:
         s_params = np.array(sample.geometry_params)
         dist = float(np.linalg.norm(params - s_params))
-        sim = math.exp(-dist ** 2 / 0.5)
+        sim = math.exp(-(dist**2) / 0.5)
         similarities.append((sim, sample))
 
     similarities.sort(key=lambda x: -x[0])
@@ -68,8 +71,12 @@ def predict_eh_barcode(
     h_fingerprints = [s.h_fingerprint for _, s in top_k]
 
     # Weighted average of scalar fields for the KNN prediction
-    knn_e_fp = _average_fingerprints(e_fingerprints, [sim for sim, _ in top_k], total_weight)
-    knn_h_fp = _average_fingerprints(h_fingerprints, [sim for sim, _ in top_k], total_weight)
+    knn_e_fp = _average_fingerprints(
+        e_fingerprints, [sim for sim, _ in top_k], total_weight
+    )
+    knn_h_fp = _average_fingerprints(
+        h_fingerprints, [sim for sim, _ in top_k], total_weight
+    )
 
     # ── God Tensor projection ──────────────────────────────────────
     e_interp = sum(sim / total_weight * s.e_embedding for sim, s in top_k)
@@ -121,9 +128,18 @@ def _average_fingerprints(
 
     result = {}
     # Scalar fields: weighted average
-    for key in ["betti_0", "betti_1", "h0_bars", "h1_bars",
-                "topological_score", "confinement_ratio",
-                "field_max", "field_mean", "field_std", "num_grid_points"]:
+    for key in [
+        "betti_0",
+        "betti_1",
+        "h0_bars",
+        "h1_bars",
+        "topological_score",
+        "confinement_ratio",
+        "field_max",
+        "field_mean",
+        "field_std",
+        "num_grid_points",
+    ]:
         vals = [fp.get(key, 0) or 0 for fp in fingerprints]
         result[key] = float(sum(w * v for w, v in zip(weights, vals)) / total_weight)
 
@@ -134,7 +150,9 @@ def _average_fingerprints(
         avg_lts = []
         for i in range(min(max_len, 10)):  # cap at 10 lifetime values
             vals = [lt[i] if i < len(lt) else 0 for lt in all_lts]
-            avg_lts.append(float(sum(w * v for w, v in zip(weights, vals)) / total_weight))
+            avg_lts.append(
+                float(sum(w * v for w, v in zip(weights, vals)) / total_weight)
+            )
         result[dim] = avg_lts
 
     result["diagrams"] = []
@@ -152,8 +170,8 @@ def _embed_to_fingerprint(embedding: np.ndarray, source: str = "e") -> Dict:
     are computed from real field data, not from embedding coordinates.
     """
     dim = len(embedding)
-    h0 = embedding[:min(10, dim)]
-    h1 = embedding[min(10, dim):]
+    h0 = embedding[: min(10, dim)]
+    h1 = embedding[min(10, dim) :]
 
     betti_0 = int(np.clip(np.linalg.norm(h0) * 2, 0, 20))
     betti_1 = int(np.clip(np.linalg.norm(h1) * 2, 0, 20))
@@ -203,7 +221,7 @@ def benchmark(
 
         try:
             mode_data = solve_cavity_modes(geom, nx=nx, ny=ny, num_modes=6)
-        except Exception as e:
+        except Exception:
             continue
 
         e_field = np.array(list(mode_data["e_modes"].values())[0]["field"])
@@ -214,22 +232,30 @@ def benchmark(
         pred = predict_eh_barcode(gt, params, shape)
 
         # Compute error — compare KNN prediction vs actual FDFD
-        e_error = abs(actual["e_fingerprint"]["betti_0"] - pred["knn_e_fingerprint"]["betti_0"])
-        h_error = abs(actual["h_fingerprint"]["betti_0"] - pred["knn_h_fingerprint"]["betti_0"])
+        e_error = abs(
+            actual["e_fingerprint"]["betti_0"] - pred["knn_e_fingerprint"]["betti_0"]
+        )
+        h_error = abs(
+            actual["h_fingerprint"]["betti_0"] - pred["knn_h_fingerprint"]["betti_0"]
+        )
         coupling_error = abs(actual["coupling_strength"] - pred["coupling_score"])
 
-        results.append({
-            "geometry": params,
-            "shape": shape,
-            "e_betti0_actual": actual["e_fingerprint"]["betti_0"],
-            "e_betti0_predicted": pred["knn_e_fingerprint"]["betti_0"],
-            "e_error": e_error,
-            "h_error": h_error,
-            "coupling_error": coupling_error,
-            "god_distance": pred["god_distance_e"],
-            "actual_coupling_strength": actual["coupling_strength"],
-            "knn_coupling_strength": pred["knn_h_fingerprint"].get("topological_score", 0),
-        })
+        results.append(
+            {
+                "geometry": params,
+                "shape": shape,
+                "e_betti0_actual": actual["e_fingerprint"]["betti_0"],
+                "e_betti0_predicted": pred["knn_e_fingerprint"]["betti_0"],
+                "e_error": e_error,
+                "h_error": h_error,
+                "coupling_error": coupling_error,
+                "god_distance": pred["god_distance_e"],
+                "actual_coupling_strength": actual["coupling_strength"],
+                "knn_coupling_strength": pred["knn_h_fingerprint"].get(
+                    "topological_score", 0
+                ),
+            }
+        )
 
     if not results:
         return {"error": "No valid results"}
