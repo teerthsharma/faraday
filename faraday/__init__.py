@@ -25,9 +25,6 @@ Example
 
 from __future__ import annotations
 
-from faraday import _types as types
-from faraday import exceptions, logging
-
 # Re-export public types
 from faraday._types import (
     Barcode,
@@ -43,6 +40,9 @@ from faraday.barcode import (
     field_to_pointcloud,
     topological_fingerprint,
 )
+
+# CLI entry point
+from faraday.cli import cli_main
 
 # Core API
 from faraday.em_solver import (
@@ -72,41 +72,38 @@ from faraday.manifold_projector import (
 )
 from faraday.predict import predict_eh_barcode
 
-# CLI entry point
-from faraday.cli import cli_main
-
-__all__ = [
+__all__ = sorted([
     # Exceptions
-    "FaradayError",
-    "ConvergenceError",
-    "SolverError",
-    "GeometryError",
-    "TopologyError",
     "ConfigError",
+    "ConvergenceError",
+    "FaradayError",
+    "GeometryError",
+    "SolverError",
+    "TopologyError",
     # Logging
     "get_logger",
     # Types
-    "NDArrayFloat",
     "Barcode",
-    "Fingerprint",
     "Embedding",
+    "Fingerprint",
     "GeometryParams",
     "ModeData",
+    "NDArrayFloat",
     # Core API
     "CavityGeometry",
     "CavityShape",
-    "solve_cavity_modes",
-    "WaveSuperposer",
-    "field_to_pointcloud",
+    "cli_main",
     "compute_barcodes",
-    "topological_fingerprint",
     "coupled_fingerprint",
-    "ManifoldProjector",
     "embed_barcode",
     "embed_fingerprint",
+    "field_to_pointcloud",
     "GodTensor",
+    "ManifoldProjector",
     "predict_eh_barcode",
-    "cli_main",
-]
+    "solve_cavity_modes",
+    "topological_fingerprint",
+    "WaveSuperposer",
+])
 
 __version__ = "0.1.0"

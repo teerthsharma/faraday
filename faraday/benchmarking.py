@@ -18,9 +18,8 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
 
 import numpy as np
 
@@ -32,7 +31,6 @@ from faraday.em_solver import (
 )
 from faraday.god_tensor import GodTensor
 from faraday.manifold_projector import ManifoldProjector, embed_fingerprint
-from faraday.predict import benchmark as predict_benchmark
 
 # ---------------------------------------------------------------------------
 # Benchmark definitions
@@ -84,8 +82,8 @@ class BenchmarkResult:
 
     name: str
     duration_s: float
-    memory_mb: Optional[float] = None
-    metadata: Dict = field(default_factory=dict)
+    memory_mb: float | None = None
+    metadata: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -95,10 +93,10 @@ class BenchmarkReport:
     suite: str
     timestamp: str
     total_duration_s: float
-    results: List[BenchmarkResult]
-    metadata: Dict = field(default_factory=dict)
+    results: list[BenchmarkResult]
+    metadata: dict = field(default_factory=dict)
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return asdict(self)
 
 
@@ -135,14 +133,14 @@ def run_suite(
         )
 
     cfg = BENCHMARK_SUITES[suite_name]
-    results: List[BenchmarkResult] = []
+    results: list[BenchmarkResult] = []
     t0_total = time.perf_counter()
 
     # ── EMSolver ────────────────────────────────────────────────────────
     geom_rect = CavityGeometry(shape=CavityShape.RECTANGULAR, dims=(2.0, 1.0))
     geom_circ = CavityGeometry(shape=CavityShape.CIRCULAR, dims=(1.0,))
 
-    for run in range(n_runs):
+    for _run in range(n_runs):
         r = run_benchmark(
             "solve_rectangular_cavity",
             solve_cavity_modes,
@@ -167,10 +165,10 @@ def run_suite(
     mode_data = solve_cavity_modes(
         geom_rect, nx=cfg["nx"], ny=cfg["ny"], num_modes=cfg["num_modes"]
     )
-    e_field = np.array(list(mode_data["e_modes"].values())[0]["field"])
-    h_field = np.array(list(mode_data["h_modes"].values())[0]["field"])
+    e_field = np.array(next(iter(mode_data["e_modes"].values()))["field"])
+    h_field = np.array(next(iter(mode_data["h_modes"].values()))["field"])
 
-    for run in range(n_runs):
+    for _run in range(n_runs):
         r = run_benchmark(
             "topological_fingerprint",
             topological_fingerprint,
@@ -193,7 +191,7 @@ def run_suite(
     emb = embed_fingerprint(fp, dim=50)
     mp = ManifoldProjector(input_dim=50, latent_dim=16)
 
-    for run in range(n_runs):
+    for _run in range(n_runs):
         r = run_benchmark(
             "manifold_projector_encode",
             mp.encode,
@@ -213,7 +211,7 @@ def run_suite(
         gt.learn_T()
         gt.find_fixed_point(iters=cfg["iters"])
 
-    for run in range(n_runs):
+    for _run in range(n_runs):
         r = run_benchmark("god_tensor_full_pipeline", run_gt)
         results.append(r)
 
@@ -234,7 +232,7 @@ def run_suite(
 def save_report(
     report: BenchmarkReport,
     output_dir: str = ".",
-    formats: List[str] = None,
+    formats: list[str] | None = None,
 ) -> None:
     """Save a benchmark report to disk.
 

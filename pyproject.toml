@@ -100,6 +100,8 @@ fail_under = 80
 [tool.ruff]
 line-length = 88
 target-version = "py310"
+
+[tool.ruff.lint]
 select = [
     "E",     # pycodestyle errors
     "W",     # pycodestyle warnings
@@ -116,6 +118,9 @@ ignore = [
     "B008",  # do not perform function calls in argument defaults
     "SIM102",  # nested if statements
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]  # re-export pattern: imports are intentionally aliased to __all__
 
 [tool.ruff.format]
 quote-style = "double"

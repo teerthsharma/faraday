@@ -24,7 +24,6 @@ Usage
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple, Optional, Any
 
 import numpy as np
 
@@ -40,14 +39,14 @@ log = get_logger(__name__)
 class TrainingSample:
     """One training sample: a geometry + its E and H field signatures."""
 
-    geometry_params: Tuple[float, ...]  # e.g. (w, h) or (r,)
-    e_fingerprint: Dict
-    h_fingerprint: Dict
+    geometry_params: tuple[float, ...]  # e.g. (w, h) or (r,)
+    e_fingerprint: dict
+    h_fingerprint: dict
     e_embedding: np.ndarray  # manifold embedding of E fingerprint
     h_embedding: np.ndarray  # manifold embedding of H fingerprint
-    k_values: List[float]  # cavity eigenmode wave numbers
+    k_values: list[float]  # cavity eigenmode wave numbers
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "geometry_params": self.geometry_params,
             "e_fingerprint": self.e_fingerprint,
@@ -72,17 +71,17 @@ class GodTensor:
     """
 
     n_geometries: int = 50
-    samples: List[TrainingSample] = field(default_factory=list)
+    samples: list[TrainingSample] = field(default_factory=list)
     projector_e: ManifoldProjector = field(
         default_factory=lambda: ManifoldProjector(input_dim=50, latent_dim=16)
     )
     projector_h: ManifoldProjector = field(
         default_factory=lambda: ManifoldProjector(input_dim=50, latent_dim=16)
     )
-    T_matrix: Optional[np.ndarray] = field(default=None, repr=False)
-    god_tensor: Optional[np.ndarray] = field(default=None, repr=False)
+    T_matrix: np.ndarray | None = field(default=None, repr=False)
+    god_tensor: np.ndarray | None = field(default=None, repr=False)
     fixed_point_converged: bool = False
-    convergence_history: List[Dict] = field(default_factory=list)
+    convergence_history: list[dict] = field(default_factory=list)
 
     def collect_training_data(
         self,
@@ -189,7 +188,7 @@ class GodTensor:
         # Using lstsq for numerical stability: T @ E_latent = H_latent
         from scipy.linalg import lstsq
 
-        T_raw, residuals, rank, s = lstsq(E_latent, H_latent)
+        T_raw, _residuals, _rank, _s = lstsq(E_latent, H_latent)
         T = T_raw.T  # (latent, latent)
 
         self.T_matrix = T
@@ -197,7 +196,7 @@ class GodTensor:
         H_recon = E_latent @ T.T
         error = float(np.mean(np.abs(H_recon - H_latent)))
 
-        log.info("t_matrix_learned", shape=T.shape, rank=rank)
+        log.info("t_matrix_learned", shape=T.shape, rank=_rank)
         log.info("t_reconstruction_error", error=error)
 
         return T
@@ -345,7 +344,7 @@ class GodTensor:
         score = float(np.exp(-np.mean(e_dists + h_dists) / 2))
         return score
 
-    def summary(self) -> Dict:
+    def summary(self) -> dict:
         """Return a human-readable summary of the God Tensor."""
         return {
             "n_samples": len(self.samples),

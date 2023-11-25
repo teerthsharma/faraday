@@ -65,7 +65,7 @@ def field_to_pointcloud(
 
 def compute_barcodes(
     points: np.ndarray, max_dim: int = 1, metric: str = "euclidean"
-) -> Dict:
+) -> dict:
     """
     Compute persistent homology barcodes from field point cloud.
     Uses ripser for efficient computation.
@@ -87,7 +87,7 @@ def compute_barcodes(
     diagrams = result["dgms"]
 
     betti = []
-    for d, dgm in enumerate(diagrams):
+    for _d, dgm in enumerate(diagrams):
         if len(dgm) > 0:
             lifetimes = dgm[:, 1] - dgm[:, 0]
             lifetimes = lifetimes[np.isfinite(lifetimes)]
@@ -120,7 +120,7 @@ def compute_barcodes(
     }
 
 
-def topological_fingerprint(field: np.ndarray, threshold: float = 0.1) -> Dict:
+def topological_fingerprint(field: np.ndarray, threshold: float = 0.1) -> dict:
     """
     Full topological analysis of an EM field distribution.
     Returns Betti numbers, barcode statistics, and field metrics.
@@ -166,11 +166,11 @@ def topological_fingerprint(field: np.ndarray, threshold: float = 0.1) -> Dict:
 
 def coupled_fingerprint(
     e_field: np.ndarray, h_field: np.ndarray, threshold: float = 0.1
-) -> Dict:
+) -> dict:
     """
     Compute coupled topological fingerprints for E and H fields together.
 
-    Uses the Poynting vector approach: E field and |S| = |E|×|H| energy flux
+    Uses the Poynting vector approach: E field and |S| = |E|||H| energy flux
     are the two scalar fields for topological comparison. Their barcode
     structures should be nearly identical in a well-coupled cavity mode
     (same nodes, same antinodes, same energy distribution).
@@ -183,7 +183,7 @@ def coupled_fingerprint(
     """
     # |E| point cloud
     e_fp = topological_fingerprint(e_field, threshold)
-    # |H| — stored as magnitude; reconstruct |S| = |E| × |H| if h_field is |H|
+    # |H| — stored as magnitude; reconstruct |S| = |E| | |H| if h_field is |H|
     # In the current convention, h_field IS |S| (energy flux magnitude)
     # because em_solver now returns |H| in h_modes["field"] and computes |S| separately.
     # For backward compatibility, detect whether h_field looks like |S| or |H|

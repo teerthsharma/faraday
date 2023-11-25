@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 import yaml
 
@@ -51,7 +51,7 @@ class TrainingConfig:
 class PredictConfig:
     """Prediction settings."""
 
-    model_path: Optional[str] = None
+    model_path: str | None = None
     batch_size: int = 32
 
 
@@ -98,10 +98,10 @@ class FaradayConfig:
     predict: PredictConfig = field(default_factory=PredictConfig)
     topology: TopologyConfig = field(default_factory=TopologyConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
-    config_file: Optional[Path] = field(default=None, repr=False)
+    config_file: Path | None = field(default=None, repr=False)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> FaradayConfig:
+    def from_dict(cls, data: dict[str, Any]) -> FaradayConfig:
         """Construct a FaradayConfig from a flat dictionary."""
         kw = {}
         sub_fields = {"solver", "training", "predict", "topology", "logging"}
@@ -141,7 +141,7 @@ class FaradayConfig:
         return cfg
 
     @classmethod
-    def load(cls, paths: Optional[list[str | Path]] = None) -> FaradayConfig:
+    def load(cls, paths: list[str | Path] | None = None) -> FaradayConfig:
         """
         Load the first found config file, falling back to defaults.
 
@@ -166,7 +166,7 @@ class FaradayConfig:
         # Return defaults if no file found
         return cls()
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Return a plain dict representation (YAML-compatible)."""
         return {
             "solver": _as_dict(self.solver),
@@ -188,13 +188,13 @@ class FaradayConfig:
 # ----------------------------------------------------------------------
 
 
-def _as_dict(obj: Any) -> Dict[str, Any]:
+def _as_dict(obj: Any) -> dict[str, Any]:
     if hasattr(obj, "__dataclass_fields__"):
         return {f: getattr(obj, f) for f in obj.__dataclass_fields__}
     return dict(obj) if isinstance(obj, dict) else obj  # pragma: no cover
 
 
-def _sub_config(name: str, data: Dict[str, Any]) -> Any:
+def _sub_config(name: str, data: dict[str, Any]) -> Any:
     """Return a sub-config dataclass instance from a dict."""
     mapping = {
         "solver": SolverConfig,
@@ -206,7 +206,7 @@ def _sub_config(name: str, data: Dict[str, Any]) -> Any:
     cls = mapping.get(name)
     if cls is None:
         raise ConfigError(f"unknown config section: {name!r}")  # pragma: no cover
-    valid = {f for f in cls.__dataclass_fields__}
+    valid = set(cls.__dataclass_fields__)
     unknown = set(data.keys()) - valid
     if unknown:
         raise ConfigError(
