@@ -47,7 +47,8 @@ def predict_eh_barcode(
         shape: "rect" or "circle"
 
     Returns:
-        dict with knn_e_fingerprint, knn_h_fingerprint, god_tensor_projected_e/h,
+        dict with knn_e_fingerprint, knn_h_fingerprint,
+        god_tensor_projected_e, god_tensor_projected_h,
         god_distances, coupling_score
     """
     params = np.array(geometry_params)

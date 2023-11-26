@@ -49,9 +49,10 @@ ENV/
 env.bak/
 venv.bak/
 
-# mypy / pyright
+# mypy / pyright / pyre
 .mypy_cache/
 .pyright/
+.pyre/
 
 # Editors
 .vscode/
@@ -59,6 +60,7 @@ venv.bak/
 *.swp
 *.swo
 *~
+*.bak
 
 # OS
 .DS_Store
@@ -67,3 +69,8 @@ Thumbs.db
 # Project-specific
 .hermes/
 faraday/_version.py
+wandb/
+*.log
+
+# CI / build artifacts
+.github/workflows/*.local.yml
