@@ -55,3 +55,35 @@ jobs:
         run: |
           python -c "from faraday import GodTensor, solve_cavity_modes, coupled_fingerprint; print('import OK')"
           python -c "from faraday.cli import main; print('cli OK')"
+
+  validation:
+    name: Generalization
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Held-out generalization experiment
+        run: |
+          python -m faraday.benchmarking --suite small --validate 2>&1 | tee validation.log
+          python -c "
+import sys, re
+with open('validation.log') as f:
+            text = f.read()
+match = re.search(r'mean_E_err=([0-9.]+)\s+mean_H_err=([0-9.]+)', text)
+if not match:
+    print('ERROR: could not parse validation results')
+    sys.exit(1)
+e_err = float(match.group(1))
+h_err = float(match.group(2))
+if e_err > 0.001 or h_err > 0.001:
+    print(f'FAIL: E_err={e_err}, H_err={h_err} exceed threshold 0.001')
+    sys.exit(1)
+print(f'PASS: E_err={e_err}, H_err={h_err} — God Tensor generalizes to unseen geometries')
+"
