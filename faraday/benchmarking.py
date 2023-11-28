@@ -216,7 +216,9 @@ def run_validation_experiment(
             geom = CavityGeometry(shape=CavityShape.CIRCULAR, dims=params)
 
         try:
-            mode_data = solve_cavity_modes(geom, nx=nx, ny=ny, num_modes=num_modes)
+            mode_data = solve_cavity_modes(
+                geom, nx=nx, ny=ny, num_modes=num_modes, seed=seed
+            )
         except Exception:
             continue
 
@@ -264,7 +266,9 @@ def run_validation_experiment(
             geom = CavityGeometry(shape=CavityShape.CIRCULAR, dims=params)
 
         try:
-            mode_data = solve_cavity_modes(geom, nx=nx, ny=ny, num_modes=num_modes)
+            mode_data = solve_cavity_modes(
+                geom, nx=nx, ny=ny, num_modes=num_modes, seed=seed
+            )
         except Exception:
             continue
 

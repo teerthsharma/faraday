@@ -208,6 +208,7 @@ def solve_cavity_modes(
     nx: int = 60,
     ny: int = 60,
     num_modes: int = 12,
+    seed: int | None = None,
 ) -> ModeData:
     """Solve for E and H eigenmodes of the cavity.
 
@@ -232,6 +233,12 @@ def solve_cavity_modes(
         Grid resolution.
     num_modes : int
         Maximum number of eigenmodes to compute.
+    seed : int, optional
+        Random seed for the ARPACK eigenvalue solver (eigsh). When None
+        (default), the solver uses unseeded random initialization which
+        produces slight eigenvalue variation across runs. Pass an explicit
+        seed for reproducible results. Internally converted to a
+        ``np.random.default_rng`` instance passed as ``eigsh(rng=...)``.
 
     Returns
     -------
@@ -276,7 +283,12 @@ def solve_cavity_modes(
     #
     # The PEC Dirichlet BC zero-modes (k=0, eigenvalue=0) are the smallest
     # magnitude eigenvalues — correctly excluded by "LM".
-    k_raw, v = eigsh(L, k=min(num_modes, max(1, n_interior - 1)), which="LM")
+    k_raw, v = eigsh(
+        L,
+        k=min(num_modes, max(1, n_interior - 1)),
+        which="LM",
+        rng=np.random.default_rng(seed) if seed is not None else None,
+    )
     k_squared = -k_raw
     k_values = np.sqrt(np.maximum(k_squared, 0))
 
