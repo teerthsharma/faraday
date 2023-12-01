@@ -1,4 +1,4 @@
-# ⚡ Faraday
+# Invented by Teerth Sharma — ⚡ Faraday
 
 **Computational Faraday Tensor** — discover the unified electromagnetic E × H coupling law from geometry data, no Maxwell's equations assumed.
 
