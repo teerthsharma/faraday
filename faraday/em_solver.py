@@ -141,7 +141,7 @@ def make_circular_grid(
 
 def build_laplacian_2d(
     nx: int, ny: int, dx: float, dy: float, interior: np.ndarray
-) -> np.ndarray:
+) -> "csr_matrix":  # type: ignore[name-defined]
     """Build the 5-point finite-difference Laplacian for the 2D Helmholtz problem.
 
     The Laplacian applies the discrete approximation:
@@ -198,7 +198,7 @@ def build_laplacian_2d(
 
     from scipy.sparse import csr_matrix
 
-    return csr_matrix((data, (row_idx, col_idx)), shape=(n, n))
+    return csr_matrix((data, (row_idx, col_idx)), shape=(n, n))  # type: ignore[return-value]
 
 
 # ---------------------------------------------------------------------------
@@ -357,7 +357,7 @@ def solve_cavity_modes(
             "ny": ny,
         }
 
-    result: dict = {
+    result: ModeData = {  # type: ignore[valid-type]
         "geometry": str(geometry.shape.value),
         "dims": geometry.dims,
         "nx": nx,
