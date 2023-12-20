@@ -65,6 +65,17 @@ class TrainingSample:
             "k_values": self.k_values,
         }
 
+    @classmethod
+    def from_dict(cls, d: dict) -> "TrainingSample":
+        return cls(
+            geometry_params=tuple(d["geometry_params"]),
+            e_fingerprint=d["e_fingerprint"],
+            h_fingerprint=d["h_fingerprint"],
+            e_embedding=np.array(d["e_embedding"], dtype=np.float64),
+            h_embedding=np.array(d["h_embedding"], dtype=np.float64),
+            k_values=list(d["k_values"]),
+        )
+
 
 @dataclass
 class GodTensor:
@@ -438,3 +449,21 @@ class GodTensor:
 
         with open(path, "rb") as fh:
             return pickle.load(fh)
+
+    def save_checkpoint(self, path: str, epoch: int, rng_state: dict) -> None:
+        """Save burn-loop checkpoint: god_tensor + epoch + RNG state (NumPy format)."""
+        np.savez(
+            path,
+            god_tensor=self.god_tensor,
+            epoch=epoch,
+            rng_state=rng_state,
+        )
+
+    @classmethod
+    def load_checkpoint(cls, path: str) -> tuple[np.ndarray, int, dict]:
+        """Load burn-loop checkpoint. Returns (god_tensor, epoch, rng_state)."""
+        data = np.load(path, allow_pickle=True)
+        god_tensor = data["god_tensor"]
+        epoch = int(data["epoch"])
+        rng_state = dict(data["rng_state"].item())
+        return god_tensor, epoch, rng_state
