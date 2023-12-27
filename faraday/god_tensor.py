@@ -200,6 +200,12 @@ class GodTensor:
         E = np.array([s.e_embedding for s in self.samples])  # (n, 50)
         H = np.array([s.h_embedding for s in self.samples])  # (n, 50)
 
+        # Train manifold projectors on the data before encoding
+        log.info("training_manifold_projector_e", samples=len(E))
+        self.projector_e.fit([s.e_embedding for s in self.samples], epochs=100, batch_size=8, verbose=False)
+        log.info("training_manifold_projector_h", samples=len(H))
+        self.projector_h.fit([s.h_embedding for s in self.samples], epochs=100, batch_size=8, verbose=False)
+
         # First project to latent space
         E_latent = np.array([self.projector_e.encode(e) for e in E])
         H_latent = np.array([self.projector_h.encode(h) for h in H])
