@@ -68,6 +68,8 @@ Issues = "https://github.com/teerthsharma/faraday/issues"
 
 [project.scripts]
 faraday = "faraday.cli:main"
+faraday-predict = "faraday.cli:predict"
+faraday-demo = "faraday.cli:demo"
 
 [tool.setuptools.packages.find]
 where = ["."]

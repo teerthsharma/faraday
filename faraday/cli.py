@@ -301,5 +301,88 @@ def config_show(
 
 cli_main = main
 
+
+# ----------------------------------------------------------------------
+# Standalone entry points (faraday-predict, faraday-demo)
+# These bypass the click group so they work as direct console_scripts.
+# ----------------------------------------------------------------------
+
+
+@click.command()
+@click.option(
+    "-w", "--width", type=float, required=True, help="Cavity width."
+)
+@click.option(
+    "-h", "--height", type=float, required=True, help="Cavity height."
+)
+@click.option(
+    "-m", "--model", "model_path", type=str, default=None,
+    help="Path to a trained GodTensor checkpoint.",
+)
+@click.option(
+    "-c", "--config", "config_path", type=str, default=None,
+    help="Path to YAML config file.",
+    callback=_resolve_config,
+    is_eager=True,
+)
+@click.pass_context
+def predict(
+    ctx: click.Context,
+    width: float,
+    height: float,
+    model_path: str | None,
+    config_path: str | None,
+) -> None:
+    """
+    Predict E and H barcodes for a new geometry using the trained God Tensor.
+
+    Example
+    -------
+    $ faraday predict --width 2.5 --height 1.2 --model god_tensor_checkpoint.pkl
+    $ faraday-predict --width 2.5 --height 1.2
+    """
+    # Lazy import to avoid circular reference during package init
+    from faraday import GodTensor
+
+    cfg: FaradayConfig = ctx.obj["config"]
+
+    if model_path is None:
+        click.echo("[faraday predict] No model provided — creating an untrained GodTensor.")
+        gt = GodTensor(n_geometries=cfg.training.n_geometries)
+    else:
+        click.echo(f"[faraday predict] Loading model from {model_path}")
+        gt = GodTensor.load(model_path)  # type: ignore[attr-defined]
+
+    barcode = gt.predict(w=width, h=height)  # type: ignore[attr-defined]
+
+    click.echo(f"\nPredicted E-field barcode for geometry ({width} x {height}):")
+    for birth, death in barcode:
+        persistence = death - birth
+        click.echo(f"  birth={birth:.4f}, death={death:.4f}, persistence={persistence:.4f}")
+
+
+@click.command()
+@click.option(
+    "-c", "--config", "config_path", type=str, default=None,
+    help="Path to YAML config file.",
+    callback=_resolve_config,
+    is_eager=True,
+)
+def demo(config_path: str | None) -> None:
+    """
+    Run the full Faraday demo: collect training data, learn T,
+    find the God Tensor, and verify predictions against FDFD.
+
+    Example
+    -------
+    $ faraday demo
+    $ faraday-demo
+    """
+    # Lazy import to avoid circular reference during package init
+    from faraday import demo as _demo_mod
+
+    _demo_mod.main()
+
+
 if __name__ == "__main__":
     main()
