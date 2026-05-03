@@ -12,24 +12,60 @@ requires-python = ">=3.10"
 authors = [{name = "Teerth Sharma"}]
 keywords = ["electromagnetics", "maxwell", "faraday-tensor", "topology", "manifold", "physics"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
     "Topic :: Scientific/Engineering :: Physics",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Strict",
 ]
-
 dependencies = [
     "numpy>=1.24",
     "scipy>=1.10",
     "ripser>=0.6",
     "persim>=0.3",
     "matplotlib>=3.7",
+    "structlog>=24.0",
+    "click>=8.0",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-cov"]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.1",
+    "pytest-benchmark>=4.0",
+    "pytest-timeout>=2.2",
+    "hypothesis>=6.90",
+    "ruff>=0.3",
+    "mypy>=1.8",
+    "pyright>=1.1",
+    "pre-commit>=3.6",
+    "nox>=2024",
+]
+doc = [
+    "sphinx>=7.0",
+    "myst-parser>=3.0",
+    "sphinx-autodoc2>=0.4",
+    "sphinx-copybutton>=0.5",
+    "sphinx-design>=0.5",
+    "furo>=2024",
+]
+bench = [
+    "pytest-benchmark>=4.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/teerthsharma/faraday"
+Documentation = "https://faraday.readthedocs.io"
+Repository = "https://github.com/teerthsharma/faraday"
+
+[project.scripts]
+faraday = "faraday.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -37,3 +73,80 @@ include = ["faraday*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
+addopts = "-v --tb=short"
+
+[tool.coverage.run]
+source = ["faraday"]
+branch = true
+omit = [
+    "*/tests/*",
+    "*/__pycache__/*",
+    "*/faraday.egg-info/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@abstractmethod",
+    "@overload",
+]
+show_missing = true
+precision = 2
+fail_under = 80
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes
+    "I",     # isort
+    "UP",    # pyupgrade
+    "B",     # flake8-bugbear
+    "C4",    # flake8-comprehensions
+    "SIM",   # flake8-simplify
+    "RUF",   # ruff-specific rules
+]
+ignore = [
+    "E501",  # line too long — handled by formatter
+    "B008",  # do not perform function calls in argument defaults
+    "SIM102",  # nested if statements
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[tool.mypy]
+python_version = "3.10"
+strict = false
+warn_return_any = true
+warn_unused_ignores = true
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["ripser.*", "persim.*"]
+ignore_missing_imports = true
+
+[tool.pyright]
+include = ["faraday"]
+exclude = ["**/__pycache__", "build", "*.egg-info"]
+pythonVersion = "3.10"
+typeCheckingMode = "basic"
+reportMissingImports = true
+reportMissingTypeStubs = false
+
+[tool.cibuildwheel]
+build = "wheel"
+architecture = "native"
+test-command = "pytest {project}/tests/ -v"
+test-requires = ["pytest", "pytest-cov"]
+
+[tool.nox]
+envdir = ".nox"
