@@ -25,9 +25,9 @@ log = get_logger(__name__)
 
 def predict_eh_barcode(
     gt: GodTensor,
-    geometry_params: Tuple[float, ...],
+    geometry_params: tuple[float, ...],
     shape: str = "rect",
-) -> Dict:
+) -> dict:
     """
     Predict E and H barcode signatures for a new geometry.
 
@@ -115,10 +115,10 @@ def predict_eh_barcode(
 
 
 def _average_fingerprints(
-    fingerprints: List[Dict],
-    weights: List[float],
+    fingerprints: list[dict],
+    weights: list[float],
     total_weight: float,
-) -> Dict:
+) -> dict:
     """
     Compute a weighted average of topological fingerprints.
     Averages scalar fields (betti numbers, lifetimes, scores) across k neighbors.
@@ -141,7 +141,9 @@ def _average_fingerprints(
         "num_grid_points",
     ]:
         vals = [fp.get(key, 0) or 0 for fp in fingerprints]
-        result[key] = float(sum(w * v for w, v in zip(weights, vals)) / total_weight)
+        result[key] = float(
+            sum(w * v for w, v in zip(weights, vals, strict=True)) / total_weight
+        )
 
     # Lifetime lists: average element-wise, clip to max 50
     for dim in ["h0_lifetimes", "h1_lifetimes"]:
@@ -151,7 +153,10 @@ def _average_fingerprints(
         for i in range(min(max_len, 10)):  # cap at 10 lifetime values
             vals = [lt[i] if i < len(lt) else 0 for lt in all_lts]
             avg_lts.append(
-                float(sum(w * v for w, v in zip(weights, vals)) / total_weight)
+                float(
+                    sum(w * v for w, v in zip(weights, vals, strict=True))
+                    / total_weight
+                )
             )
         result[dim] = avg_lts
 
@@ -159,7 +164,7 @@ def _average_fingerprints(
     return result
 
 
-def _embed_to_fingerprint(embedding: np.ndarray, source: str = "e") -> Dict:
+def _embed_to_fingerprint(embedding: np.ndarray, source: str = "e") -> dict:
     """
     Convert a manifold embedding back to a fingerprint-like dict.
     This is an INVERSE of embed_fingerprint for a 16D embedding:
@@ -199,11 +204,11 @@ def _embed_to_fingerprint(embedding: np.ndarray, source: str = "e") -> Dict:
 
 def benchmark(
     gt: GodTensor,
-    test_geometries: List[Tuple[float, ...]],
-    shapes: List[str],
+    test_geometries: list[tuple[float, ...]],
+    shapes: list[str],
     nx: int = 50,
     ny: int = 50,
-) -> Dict:
+) -> dict:
     """
     Benchmark: compare God Tensor predictions vs actual FDFD solutions
     for a set of held-out geometries.
@@ -212,7 +217,7 @@ def benchmark(
         dict with per-geometry errors and aggregate metrics
     """
     results = []
-    for params, shape in zip(test_geometries, shapes):
+    for params, shape in zip(test_geometries, shapes, strict=True):
         # Get actual fingerprint from FDFD
         if shape == "rect":
             geom = CavityGeometry(shape=CavityShape.RECTANGULAR, dims=params)
@@ -224,8 +229,8 @@ def benchmark(
         except Exception:
             continue
 
-        e_field = np.array(list(mode_data["e_modes"].values())[0]["field"])
-        h_field = np.array(list(mode_data["h_modes"].values())[0]["field"])
+        e_field = np.array(next(iter(mode_data["e_modes"].values()))["field"])
+        h_field = np.array(next(iter(mode_data["h_modes"].values()))["field"])
         actual = coupled_fingerprint(e_field, h_field)
 
         # Get prediction
