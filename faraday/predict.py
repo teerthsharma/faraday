@@ -30,7 +30,13 @@ def predict_eh_barcode(
 
     Uses the God Tensor to project from geometry -> E_signature -> H_signature
     (or the reverse). Instead of running FDFD, we interpolate on the
-    learned manifold.
+    learned manifold using K-nearest-geometries on the training set.
+
+    The prediction has THREE components:
+    1. KNN fingerprint: weighted average of actual fingerprints from
+       the k most similar training geometries (ground truth baseline)
+    2. God Tensor projection: E embedding -> T(E) -> predicted H embedding
+    3. Coupled prediction: both E and H flow through T to verify convergence
 
     Args:
         gt: trained GodTensor
@@ -38,61 +44,112 @@ def predict_eh_barcode(
         shape: "rect" or "circle"
 
     Returns:
-        dict with predicted E and H fingerprints, God Tensor projection
+        dict with knn_e_fingerprint, knn_h_fingerprint, god_tensor_projected_e/h,
+        god_distances, coupling_score
     """
     params = np.array(geometry_params)
 
-    # Interpolate E and H embeddings from training data via geometry similarity
+    # ── KNN on geometry params ─────────────────────────────────────
     similarities = []
     for sample in gt.samples:
         s_params = np.array(sample.geometry_params)
         dist = float(np.linalg.norm(params - s_params))
-        sim = math.exp(-dist ** 2 / 0.5)  # RBF weight
+        sim = math.exp(-dist ** 2 / 0.5)
         similarities.append((sim, sample))
 
     similarities.sort(key=lambda x: -x[0])
-    top_k = similarities[:5]  # 5 nearest neighbors
+    top_k = similarities[:5]
 
     total_weight = sum(sim for sim, _ in top_k)
+
+    # KNN fingerprint: weighted average of ACTUAL training fingerprints
+    # (not invented from embedding coordinates)
+    e_fingerprints = [s.e_fingerprint for _, s in top_k]
+    h_fingerprints = [s.h_fingerprint for _, s in top_k]
+
+    # Weighted average of scalar fields for the KNN prediction
+    knn_e_fp = _average_fingerprints(e_fingerprints, [sim for sim, _ in top_k], total_weight)
+    knn_h_fp = _average_fingerprints(h_fingerprints, [sim for sim, _ in top_k], total_weight)
+
+    # ── God Tensor projection ──────────────────────────────────────
     e_interp = sum(sim / total_weight * s.e_embedding for sim, s in top_k)
     h_interp = sum(sim / total_weight * s.h_embedding for sim, s in top_k)
-
-    # Normalize
     e_interp = e_interp / (np.linalg.norm(e_interp) + 1e-10)
     h_interp = h_interp / (np.linalg.norm(h_interp) + 1e-10)
 
-    # Project through God Tensor
+    # Project through T
     e_via_gt = gt.get_e_to_h_map(e_interp)  # E -> T(E) = predicted H
     h_via_gt = gt.get_h_to_e_map(h_interp)  # H -> T(H) = predicted E
-
-    # Decode from latent back to fingerprint (simplified: reconstruct)
-    # We store the embedding directly as the predicted signature
-    e_pred_fp = _embed_to_fingerprint(e_via_gt, source="e")
-    h_pred_fp = _embed_to_fingerprint(h_via_gt, source="h")
 
     # Distance from God Tensor
     god_dist_e = float(np.linalg.norm(e_via_gt - gt.god_tensor))
     god_dist_h = float(np.linalg.norm(h_via_gt - gt.god_tensor))
 
+    # God Tensor projected fingerprints (for comparison with KNN)
+    gt_e_fp = _embed_to_fingerprint(h_via_gt, source="e_via_gt")
+    gt_h_fp = _embed_to_fingerprint(e_via_gt, source="h_via_gt")
+
     return {
         "geometry_params": geometry_params,
         "shape": shape,
-        "predicted_e_fingerprint": e_pred_fp,
-        "predicted_h_fingerprint": h_pred_fp,
-        "e_via_god_tensor": e_via_gt.tolist(),
-        "h_via_god_tensor": h_via_gt.tolist(),
-        "god_tensor": gt.god_tensor.tolist(),
+        # KNN predictions (actual fingerprints from similar geometries)
+        "knn_e_fingerprint": knn_e_fp,
+        "knn_h_fingerprint": knn_h_fp,
+        # God Tensor projections
+        "god_tensor_projected_e": gt_e_fp,  # H <- T(E) — predicted H
+        "god_tensor_projected_h": gt_h_fp,  # E <- T(H) — predicted E
         "god_distance_e": god_dist_e,
         "god_distance_h": god_dist_h,
         "coupling_score": gt.god_score(),
+        # Comparison
+        "e_betti0_knn_vs_gt_diff": abs(knn_e_fp["betti_0"] - gt_e_fp["betti_0"]),
+        "h_betti0_knn_vs_gt_diff": abs(knn_h_fp["betti_0"] - gt_h_fp["betti_0"]),
     }
+
+
+def _average_fingerprints(
+    fingerprints: List[Dict],
+    weights: List[float],
+    total_weight: float,
+) -> Dict:
+    """
+    Compute a weighted average of topological fingerprints.
+    Averages scalar fields (betti numbers, lifetimes, scores) across k neighbors.
+    """
+    if not fingerprints:
+        return {}
+
+    result = {}
+    # Scalar fields: weighted average
+    for key in ["betti_0", "betti_1", "h0_bars", "h1_bars",
+                "topological_score", "confinement_ratio",
+                "field_max", "field_mean", "field_std", "num_grid_points"]:
+        vals = [fp.get(key, 0) or 0 for fp in fingerprints]
+        result[key] = float(sum(w * v for w, v in zip(weights, vals)) / total_weight)
+
+    # Lifetime lists: average element-wise, clip to max 50
+    for dim in ["h0_lifetimes", "h1_lifetimes"]:
+        all_lts = [fp.get(dim, []) for fp in fingerprints]
+        max_len = max(len(lt) for lt in all_lts) if all_lts else 0
+        avg_lts = []
+        for i in range(min(max_len, 10)):  # cap at 10 lifetime values
+            vals = [lt[i] if i < len(lt) else 0 for lt in all_lts]
+            avg_lts.append(float(sum(w * v for w, v in zip(weights, vals)) / total_weight))
+        result[dim] = avg_lts
+
+    result["diagrams"] = []
+    return result
 
 
 def _embed_to_fingerprint(embedding: np.ndarray, source: str = "e") -> Dict:
     """
     Convert a manifold embedding back to a fingerprint-like dict.
-    Inverse of embed_fingerprint for a 16D embedding:
+    This is an INVERSE of embed_fingerprint for a 16D embedding:
       [:10] → h0 lifetimes,  [10:] → h1 lifetimes
+
+    NOTE: This is only used for God Tensor projected fingerprints.
+    The primary prediction path uses actual KNN fingerprints which
+    are computed from real field data, not from embedding coordinates.
     """
     dim = len(embedding)
     h0 = embedding[:min(10, dim)]
@@ -156,20 +213,22 @@ def benchmark(
         # Get prediction
         pred = predict_eh_barcode(gt, params, shape)
 
-        # Compute error
-        e_error = abs(actual["e_fingerprint"]["betti_0"] - pred["predicted_e_fingerprint"]["betti_0"])
-        h_error = abs(actual["h_fingerprint"]["betti_0"] - pred["predicted_h_fingerprint"]["betti_0"])
+        # Compute error — compare KNN prediction vs actual FDFD
+        e_error = abs(actual["e_fingerprint"]["betti_0"] - pred["knn_e_fingerprint"]["betti_0"])
+        h_error = abs(actual["h_fingerprint"]["betti_0"] - pred["knn_h_fingerprint"]["betti_0"])
         coupling_error = abs(actual["coupling_strength"] - pred["coupling_score"])
 
         results.append({
             "geometry": params,
             "shape": shape,
             "e_betti0_actual": actual["e_fingerprint"]["betti_0"],
-            "e_betti0_predicted": pred["predicted_e_fingerprint"]["betti_0"],
+            "e_betti0_predicted": pred["knn_e_fingerprint"]["betti_0"],
             "e_error": e_error,
             "h_error": h_error,
             "coupling_error": coupling_error,
             "god_distance": pred["god_distance_e"],
+            "actual_coupling_strength": actual["coupling_strength"],
+            "knn_coupling_strength": pred["knn_h_fingerprint"].get("topological_score", 0),
         })
 
     if not results:

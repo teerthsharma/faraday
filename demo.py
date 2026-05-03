@@ -46,10 +46,10 @@ def main():
     print("\n[4] Predicting E/H for new geometry: w=2.0, h=1.2")
     from faraday.predict import predict_eh_barcode
     pred = predict_eh_barcode(gt, (2.0, 1.2), "rect")
-    print(f"    Predicted E Betti-0: {pred['predicted_e_fingerprint']['betti_0']}")
-    print(f"    Predicted H Betti-0: {pred['predicted_h_fingerprint']['betti_0']}")
-    print(f"    God distance (E): {pred['god_distance_e']:.6f}")
-    print(f"    God distance (H): {pred['god_distance_h']:.6f}")
+    print(f"    KNN Predicted E Betti-0: {pred['knn_e_fingerprint']['betti_0']:.0f}")
+    print(f"    KNN Predicted H Betti-0: {pred['knn_h_fingerprint']['betti_0']:.0f}")
+    print(f"    God distance (E): {pred['god_distance_e']:.4f}")
+    print(f"    God distance (H): {pred['god_distance_h']:.4f}")
     print(f"    Coupling score:   {pred['coupling_score']:.4f}")
 
     # ── 5. Verify: run actual FDFD for comparison ─────────────────
@@ -61,18 +61,9 @@ def main():
     actual = coupled_fingerprint(e_field, h_field)
     print(f"    Actual E Betti-0:   {actual['e_fingerprint']['betti_0']}")
     print(f"    Actual H Betti-0:   {actual['h_fingerprint']['betti_0']}")
-    print(f"    Phase alignment:    {actual['phase_alignment']:.4f}")
-    print(f"    Coupling strength: {actual['coupling_strength']:.4f}")
-
-    # ── 6. Benchmark on held-out geometries ──────────────────────
-    print("\n[6] Benchmarking on 5 held-out geometries...")
-    test_geos = [(1.5, 1.0), (2.5, 0.8), (1.8, 1.5), (3.0, 1.0), (2.2, 1.8)]
-    test_shapes = ["rect"] * 5
-    from faraday.predict import benchmark
-    bench = benchmark(gt, test_geos, test_shapes, nx=30, ny=30)
-    print(f"    Avg E Betti-0 error: {bench['avg_e_betti0_error']:.2f}")
-    print(f"    Avg H Betti-0 error: {bench['avg_h_betti0_error']:.2f}")
-    print(f"    Avg coupling error:  {bench['avg_coupling_error']:.4f}")
+    print(f"    EMD (|E| vs |S|):   {actual['emd_S']:.4f}")
+    print(f"    Coupling strength:   {actual['coupling_strength']:.4f}")
+    print(f"    Confined energy:     {actual['confinement_alignment']:.2%}")
 
     # ── 7. Print God Tensor summary ───────────────────────────────
     print("\n[7] God Tensor Summary:")

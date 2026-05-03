@@ -91,12 +91,19 @@ def solve_cavity_modes(
 
     Both share the same wave number k and spatial pattern structure —
     they are linked by Maxwell's equations. We solve for E_z (TM modes)
-    and derive H_z from the curl relation.
+    and derive H_x, H_y (transverse components) from the curl relation.
+
+    H_x = (i/ωμ) ∂E_z/∂y
+    H_y = -(i/ωμ) ∂E_z/∂x
+
+    The Poynting vector magnitude |S| = |E| × √(|H_x|² + |H_y|²) is used
+    as the physically meaningful H-field proxy for topological analysis.
 
     Returns dict with:
       - k_values: list of wave numbers (shared by E and H)
       - e_modes: dict of E_z field patterns
-      - h_modes: dict of H_z field patterns (derived)
+      - h_modes: dict of H_x, H_y transverse field patterns
+      - s_modes: dict of |S| = Poynting vector magnitude (energy flux)
       - geometry: cavity shape description
       - dims: physical dimensions
     """
@@ -108,7 +115,7 @@ def solve_cavity_modes(
     elif geometry.shape == CavityShape.CIRCULAR:
         r, = geometry.dims
         X, Y, interior = make_circular_grid(r, nx)
-        dx = dy = 2 * r / (nx - 1)
+        dx, dy = 2 * r / (nx - 1), 2 * r / (nx - 1)
     else:
         raise NotImplementedError(f"Shape {geometry.shape} not yet supported")
 
@@ -125,40 +132,58 @@ def solve_cavity_modes(
 
     e_modes = {}
     h_modes = {}
+    s_modes = {}
     for count, i in enumerate(valid_idx):
         kk = k_values[i]
-        e_map = np.zeros((ny, nx), dtype=complex)
-        hx_map = np.zeros((ny, nx), dtype=complex)
-        hy_map = np.zeros((ny, nx), dtype=complex)
+        e_map = np.zeros((ny, nx))
+        hx_map = np.zeros((ny, nx))
+        hy_map = np.zeros((ny, nx))
         for j in range(ny):
             for ii in range(nx):
                 idx = ii + j * nx
                 if interior[j, ii]:
-                    e_map[j, ii] = v[idx, i]
+                    e_val = v[idx, i]
+                    e_map[j, ii] = e_val
                     # H_x and H_y (transverse) derived from E_z via Maxwell's curl:
                     # H_x = (i/ωμ) ∂E_z/∂y,  H_y = -(i/ωμ) ∂E_z/∂x
+                    # Since eigsh returns real eigenvectors, we use finite differences
+                    # on the real field directly.
                     if ii > 0 and ii < nx - 1 and j > 0 and j < ny - 1:
                         dex_dy = (v[idx + nx, i] - v[idx - nx, i]) / (2 * dy)
                         dex_dx = (v[idx + 1, i] - v[idx - 1, i]) / (2 * dx)
                         omega = kk if kk > 1e-6 else 1.0
-                        hx_map[j, ii] = 1j * dex_dy / omega
-                        hy_map[j, ii] = -1j * dex_dx / omega
+                        # H_x = (i/ωμ) ∂E_z/∂y  →  real field × real derivative = imaginary H
+                        # In 2D TM: H is transverse (Hx, Hy), not Hz.
+                        # We store the magnitude for topological analysis.
+                        hx_map[j, ii] = abs(dex_dy) / omega
+                        hy_map[j, ii] = abs(dex_dx) / omega
                     else:
-                        hx_map[j, ii] = 0
-                        hy_map[j, ii] = 0
+                        hx_map[j, ii] = 0.0
+                        hy_map[j, ii] = 0.0
+
+        # Poynting vector magnitude: |S| = |E| × |H| (energy flux density)
+        # This is the physically meaningful H-field proxy.
+        # H magnitude = sqrt(Hx² + Hy²)
+        h_mag = np.sqrt(hx_map**2 + hy_map**2)
+        s_map = np.abs(e_map) * h_mag
 
         e_modes[f"mode_{count}"] = {
             "k": float(kk),
             "wavelength": float(2 * np.pi / kk) if kk > 0 else float("inf"),
-            "field": e_map.real.tolist(),
+            "field": e_map.tolist(),
             "nx": nx, "ny": ny,
         }
         h_modes[f"mode_{count}"] = {
             "k": float(kk),
             "wavelength": float(2 * np.pi / kk) if kk > 0 else float("inf"),
-            "field": hx_map.imag.tolist(),  # eigsh is real, 1j*real is imaginary
-            "hx": hx_map.imag.tolist(),
-            "hy": hy_map.imag.tolist(),
+            "field": h_mag.tolist(),   # |H| = sqrt(Hx² + Hy²)
+            "hx": hx_map.tolist(),
+            "hy": hy_map.tolist(),
+            "nx": nx, "ny": ny,
+        }
+        s_modes[f"mode_{count}"] = {
+            "k": float(kk),
+            "field": s_map.tolist(),    # |S| = |E| × |H| — energy flux
             "nx": nx, "ny": ny,
         }
 
@@ -170,6 +195,7 @@ def solve_cavity_modes(
         "k_values": [float(kk) for kk in k_values[valid_idx]],
         "e_modes": e_modes,
         "h_modes": h_modes,
+        "s_modes": s_modes,  # |S| = Poynting vector magnitude (energy flux)
         "X": X.tolist(),
         "Y": Y.tolist(),
         "interior": interior.tolist(),

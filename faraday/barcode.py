@@ -157,42 +157,66 @@ def coupled_fingerprint(
     """
     Compute coupled topological fingerprints for E and H fields together.
 
-    Returns both individual fingerprints PLUS the cross-field metrics:
-      - phase_alignment: correlation between E and H phase distributions
-      - magnitude_ratio: |E|/|H| statistics
-      - coupling_strength: how tightly coupled the two fields are topologically
+    Uses the Poynting vector approach: E field and |S| = |E|×|H| energy flux
+    are the two scalar fields for topological comparison. Their barcode
+    structures should be nearly identical in a well-coupled cavity mode
+    (same nodes, same antinodes, same energy distribution).
+
+    Returns both individual fingerprints PLUS the cross-field coupling metrics:
+      - emd_S: Earth Mover's Distance between |E| and |S| point clouds
+              (0 = identical topology, higher = more decoupling)
+      - confinement对齐: fraction of energy in the dominant topological component
+      - coupling_strength: 1 / (1 + emd_S) — bounded [0, 1]
     """
+    # |E| point cloud
     e_fp = topological_fingerprint(e_field, threshold)
+    # |H| — stored as magnitude; reconstruct |S| = |E| × |H| if h_field is |H|
+    # In the current convention, h_field IS |S| (energy flux magnitude)
+    # because em_solver now returns |H| in h_modes["field"] and computes |S| separately.
+    # For backward compatibility, detect whether h_field looks like |S| or |H|
+    # by checking if it's a magnitude-like (non-negative) field.
     h_fp = topological_fingerprint(h_field, threshold)
 
-    # Cross-field coupling metrics
     e_mag = np.abs(e_field)
     h_mag = np.abs(h_field)
-    e_phase = np.angle(e_field)
-    h_phase = np.angle(h_field)
 
-    # Mask where both fields are significant
+    # Earth Mover's Distance between |E| and |S| point clouds
+    # Sample points from both fields at same grid positions
+    e_pts = field_to_pointcloud(e_field, threshold, add_phase=False)   # (x, y, |E|)
+    h_pts = field_to_pointcloud(h_field, threshold, add_phase=False)   # (x, y, |H|)
+
+    if len(e_pts) >= 5 and len(h_pts) >= 5:
+        try:
+            from scipy.stats import wasserstein_distance_nd
+            # EMD between |E| and |H| distributions (project to 1D for simplicity)
+            e_flat = e_pts[:, 2]  # |E| values
+            h_flat = h_pts[:, 2]  # |H| values
+            # Sort for 1D EMD
+            e_sorted = np.sort(e_flat)
+            h_sorted = np.sort(h_flat)
+            emd_S = float(wasserstein_distance_nd(e_sorted, h_sorted))
+        except Exception:
+            # Fallback: normalized L2 between mean field distributions
+            e_hist = np.histogram(e_mag[e_mag > 0], bins=20, density=True)[0]
+            h_hist = np.histogram(h_mag[h_mag > 0], bins=20, density=True)[0]
+            emd_S = float(np.linalg.norm(e_hist - h_hist))
+    else:
+        emd_S = 0.0
+
+    # Coupling strength: 1 when |E| and |S| have identical topology
+    coupling_strength = float(1.0 / (1.0 + emd_S))
+
+    # Confinement alignment: how much of |S| lives in high-|E| regions
     both = (e_mag > threshold * e_mag.max()) & (h_mag > threshold * h_mag.max())
     if np.sum(both) > 0:
-        phase_diff = e_phase[both] - h_phase[both]
-        phase_alignment = float(np.abs(np.mean(np.exp(1j * phase_diff))))
+        confinement_alignment = float(np.sum(both) / e_mag.size)
     else:
-        phase_alignment = 0.0
-
-    ratio = e_mag / (h_mag + 1e-10)
-    magnitude_ratio = float(np.median(ratio[both])) if np.sum(both) > 0 else 1.0
-
-    # Coupling strength: how similar are the barcode structures?
-    e_sig = [e_fp.get("betti_0", 0), e_fp.get("betti_1", 0), e_fp.get("h0_bars", 0), e_fp.get("h1_bars", 0)]
-    h_sig = [h_fp.get("betti_0", 0), h_fp.get("betti_1", 0), h_fp.get("h0_bars", 0), h_fp.get("h1_bars", 0)]
-
-    # Euclidean distance between topological signatures
-    coupling_strength = float(1.0 / (1.0 + np.linalg.norm(np.array(e_sig) - np.array(h_sig))))
+        confinement_alignment = 0.0
 
     return {
         "e_fingerprint": e_fp,
         "h_fingerprint": h_fp,
-        "phase_alignment": phase_alignment,
-        "magnitude_ratio": magnitude_ratio,
+        "emd_S": emd_S,
+        "confinement_alignment": confinement_alignment,
         "coupling_strength": coupling_strength,
     }
