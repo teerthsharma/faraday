@@ -170,7 +170,7 @@ def coupled_fingerprint(
     """
     Compute coupled topological fingerprints for E and H fields together.
 
-    Uses the Poynting vector approach: E field and |S| = |E|||H| energy flux
+    Uses the Poynting vector approach: E field and |S| = |E| times |H| energy flux
     are the two scalar fields for topological comparison. Their barcode
     structures should be nearly identical in a well-coupled cavity mode
     (same nodes, same antinodes, same energy distribution).
@@ -178,8 +178,8 @@ def coupled_fingerprint(
     Returns both individual fingerprints PLUS the cross-field coupling metrics:
       - emd_S: Earth Mover's Distance between |E| and |S| point clouds
               (0 = identical topology, higher = more decoupling)
-      - confinement对齐: fraction of energy in the dominant topological component
-      - coupling_strength: 1 / (1 + emd_S) — bounded [0, 1]
+      - confinement: fraction of energy in the dominant topological component
+      - coupling_strength: 1 / (1 + emd_S) -- bounded [0, 1]
     """
     # |E| point cloud
     e_fp = topological_fingerprint(e_field, threshold)

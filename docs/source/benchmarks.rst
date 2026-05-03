@@ -39,7 +39,7 @@ Persistent homology computation times:
    :widths: 40 30 30
 
    * - Point Cloud Size
-     -ripser Time (s)
+     - Ripser Time (s)
      - Memory (MB)
    * - 500 points
      - 0.3
