@@ -3,47 +3,37 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "gcguard"
+name = "faraday"
 version = "0.1.0"
-description = "Gaussian Containment Guard — EM field confinement via Gaussian envelope functions"
+description = "Computational Faraday Tensor: discover the unified E x H field coupling via topology-fixed-point projection"
 readme = "README.md"
 license = {text = "MIT"}
-authors = [
-    {name = "gcguard contributors"}
-]
-keywords = ["electromagnetics", "fdtd", "fdfd", "field-confinement", "gaussian", "photonics"]
+requires-python = ">=3.10"
+authors = [{name = "Teerth Sharma"}]
+keywords = ["electromagnetics", "maxwell", "faraday-tensor", "topology", "manifold", "physics"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
+    "Topic :: Scientific/Engineering :: Physics",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
-    "Topic :: Scientific/Engineering :: Physics",
+    "Programming Language :: Python :: 3.12",
 ]
-requires-python = ">=3.9"
+
 dependencies = [
-    "numpy>=1.21",
-    "scipy>=1.7",
-    "matplotlib>=3.5",
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "ripser>=0.6",
+    "persim>=0.3",
+    "matplotlib>=3.7",
 ]
 
 [project.optional-dependencies]
-dev = [
-    "pytest>=7.0",
-    "pytest-cov>=3.0",
-]
-
-[project.scripts]
-gcguard = "gcguard.cli:main"
-
-[project.urls]
-Homepage = "https://github.com/teerthsharma/agentic-dream-gcguard"
+dev = ["pytest", "pytest-cov"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["gcguard*"]
+include = ["faraday*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
