@@ -1,3 +1,30 @@
+Metadata-Version: 2.4
+Name: gcguard
+Version: 0.1.0
+Summary: Gaussian Containment Guard — EM field confinement via Gaussian envelope functions
+Author: gcguard contributors
+License: MIT
+Project-URL: Homepage, https://github.com/teerthsharma/agentic-dream-gcguard
+Keywords: electromagnetics,fdtd,fdfd,field-confinement,gaussian,photonics
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Science/Research
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Topic :: Scientific/Engineering :: Physics
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: numpy>=1.21
+Requires-Dist: scipy>=1.7
+Requires-Dist: matplotlib>=3.5
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0; extra == "dev"
+Requires-Dist: pytest-cov>=3.0; extra == "dev"
+Dynamic: license-file
+
 # gcguard — Gaussian Containment Guard
 
 **gcguard** is a Python library for confining, repelling, and channelling electromagnetic
