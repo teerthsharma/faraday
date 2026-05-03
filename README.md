@@ -1,179 +1,126 @@
-# gcguard — Gaussian Containment Guard
+# ⚡ Faraday
 
-**gcguard** is a Python library for confining, repelling, and channelling electromagnetic
-field energy in numerical simulations (FDFD/FDTD) using *Gaussian envelope functions*.
+**Computational Faraday Tensor — discover the unified E × H field coupling via topology-fixed-point projection.**
 
----
-
-## Mathematical Foundation
-
-In each spatial dimension the domain is partitioned by three primitive operators:
-**wells**, **barriers**, and **channels**.  Every operator is a smooth, everywhere-positive
-Gaussian mask; they compose via pointwise multiplication.
-
-### Gaussian Well (attract energy)
-
-A well at position `r₀` with width `σ` and strength `s` produces the mask
+The electromagnetic field is not two things. Electric field **E** and magnetic field **H** are two views of one geometric object — the **Faraday tensor** `F_μν`. This library learns that tensor from data.
 
 ```
-G_well(r) = exp( -|r - r₀|² / 2σ² )^s
+E field ──┐              ┌── E fingerprint
+          ├──► God Tensor ──► H fingerprint
+H field ──┘              └── coupled field
 ```
 
-`G_well → 1` near `r₀` (energy is *attracted*) and `G_well → 0` far away.
-Higher `s` sharpens the well.
+## The God Tensor
 
-### Gaussian Barrier (repel energy)
-
-A barrier is the complement of a well:
+The **God Tensor** is the fixed point of E ⇄ H co-determination:
 
 ```
-G_barrier(r) = 1 - exp( -|r - r₀|² / 2σ² )^s
+T(E) → H     (electric field encodes magnetic field)
+T(H) → E     (magnetic field encodes electric field)
+T(T(x)) = T(x)   [fixed point — the invariant]
 ```
 
-`G_barrier → 0` near `r₀` (energy is *blocked*) and `G_barrier → 1` far away.
+At convergence, `T(x)` is the **Faraday tensor** — the operator that IS the unified field. It was discovered from data, not assumed from Maxwell's equations.
 
-### Gaussian Channel (guide along a path)
+## Architecture
 
-A channel follows a polyline `P = {p₀, p₁, …, pₙ}`.  Sub-sampling `P` into `M` points
-`{q₁, …, q_M}` and evaluating a narrow cross-sectional Gaussian at each point gives
+| Module | Role |
+|--------|------|
+| `em_solver` | FDFD cavity solver. Computes coupled E and H eigenmodes. |
+| `barcode` | Field → point cloud → persistent homology barcode. |
+| `manifold_projector` | Barcode → Hilbert coefficients → autoencoder embedding. |
+| `god_tensor` | T(E) ⇄ T(H) fixed-point iteration → God Tensor. |
+| `predict` | Given new geometry → predict E and H topology via God Tensor. |
 
-```
-G_channel(r) = ∏_{i=1}^{M} exp( -|r - q_i|² / 2σ² )
-            = exp( -min_i |r - q_i|² / 2σ² )
-```
-
-The last equality holds because the product of exponentials equals the exponential of
-the minimum squared distance.  `G_channel → 1` exactly on the polyline and decays
-rapidly off it.
-
-### Combined Envelope
-
-For a collection of wells `{W}`, barriers `{B}`, and channels `{C}` the **total
-envelope** is the product of all individual masks:
-
-```
-E_total(r) =  ( ∏_{w∈W} G_well(r; w)  )
-           × ( ∏_{b∈B} G_barrier(r; b) )
-           × ( ∏_{c∈C} G_channel(r; c) )
-```
-
-Applying the envelope to a field `E(r)` yields the *confined field*:
-
-```
-E_confined(r) = E(r) × E_total(r)
-```
-
-### Confinement Score
-
-The fraction of field energy inside a geometry is
-
-```
-score = ∫_region |E|² dr  /  ∫_domain |E|² dr
-```
-
-where the region is defined by `E_total ≈ 1`.  This is computed discretely as
-
-```
-score = Σ |E_inside|²  /  Σ |E|²
-```
-
----
-
-## Usage
-
-```python
-import numpy as np
-import gcguard as gcg
-
-# Grid
-nx, ny = 200, 200
-x = np.linspace(0, 1, nx)
-y = np.linspace(0, 1, ny)
-X, Y = np.meshgrid(x, y, indexing='ij')
-# coordinate array for gcguard
-R = np.stack([X, Y], axis=-1)
-
-# Synthetic field (two counter-propagating Gaussian beams)
-k = 2 * np.pi * 8
-E = (np.exp(-((X-0.25)**2 + (Y-0.5)**2)/0.02) * np.exp(1j*k*X)
-   + 0.7 * np.exp(-((X-0.75)**2 + (Y-0.5)**2)/0.02) * np.exp(-1j*k*(X-1)))
-
-# Define geometries
-well    = gcg.Well(center=(0.5, 0.5), sigma=0.12, strength=1.0)
-barrier = gcg.Barrier(center=(0.65, 0.65), sigma=0.08, strength=2.0)
-channel = gcg.Channel(path=[(0,0.5),(0.5,0.8),(1,0.5)], sigma=0.05)
-
-# Compute envelope and apply
-envelope = gcg.compute_envelope(E, [well, barrier, channel], r=R)
-confined = E * envelope
-
-# Score: what fraction of energy is in the well?
-score = gcg.confinement_score(E, well, r=R)   # → 0.0 – 1.0
-print(f"Well confinement: {score:.4f}")
-
-# Bulk score across all geometries
-bulk = gcg.bulk_score(E, [well, barrier], r=R)
-print(f"Combined score:   {bulk:.4f}")
-```
-
-### FDFD Integration
-
-gcguard ships with FDFD helpers that accept physical `dx` and `extent`:
-
-```python
-# Physical domain: 10 µm × 10 µm, dx = 0.05 µm
-envelope = gcg.fdfd_envelope(E, [well], dx=0.05, extent=((0, 10), (0, 10)))
-confined = gcg.fdfd_confined_field(E, [well], dx=0.05, extent=((0, 10), (0, 10)))
-```
-
----
-
-## CLI Demo
+## Install
 
 ```bash
-pip install -e .
-gcguard demo --output demo.png
-gcguard geometry-plot --output geo.png
-gcguard score --shape 300
+pip install faraday
 ```
 
----
+Or from source:
+```bash
+git clone https://github.com/teerthsharma/faraday.git
+cd faraday
+pip install -e .
+```
 
-## API Reference
+## Quick Start
 
-| Class | Description |
-|---|---|
-| `Well(center, sigma, strength)` | Gaussian energy well |
-| `Barrier(center, sigma, strength)` | Gaussian energy barrier |
-| `Channel(path, sigma)` | Gaussian energy channel (polyline) |
+```python
+from faraday import GodTensor
 
-| Function | Description |
-|---|---|
-| `compute_envelope(field, geometries, r=None, extent=(0,1))` | Combined envelope |
-| `confined_field(field, geometries, ...)` | Field × envelope |
-| `confinement_score(field, geometry, ...)` | Per-geometry energy fraction |
-| `bulk_score(field, geometries, ...)` | Multi-geometry energy fraction |
-| `fdfd_envelope(field, geometries, dx=1, extent=(0,1))` | Physical-unit envelope |
-| `plot_vector_field_heatmap(...)` | Visualise field + envelope contours |
-| `plot_geometry_overview(...)` | Panel plot of each geometry type |
+# 1. Collect training data: varied cavity geometries with E and H fields
+gt = GodTensor(n_geometries=50)
+gt.collect_training_data(nx=40, ny=40)
 
----
+# 2. Learn the coupling operator T
+gt.learn_T()
 
-## Demo Figure
+# 3. Find the fixed point — the God Tensor
+gt.find_fixed_point(iters=500, tol=1e-7)
 
-The figure below shows a 2-D standing-wave field with three Gaussian containment
-elements overlaid:
+# 4. Predict E and H topology for a new geometry (no FDFD needed)
+pred = gt.predict(w=2.0, h=1.5)
+print(f"Predicted E Betti-0: {pred['e_fingerprint']['betti_0']}")
+print(f"God distance: {pred['god_distance_e']:.6f}")
+print(f"Coupling score: {pred['coupling_score']:.4f}")
 
-- **Green circle** — Well (`sigma=0.12`, `strength=1.0`) at the centre
-- **Red cross** — Barrier (`sigma=0.08`, `strength=2.0`) upper-right
-- **Blue dashed line** — Channel (`sigma=0.05`) arcing through the domain
+# 5. God Score — how well does T unify E and H?
+print(f"God Score: {gt.god_score():.4f}")
+```
 
-White contours mark envelope levels `{0.1, 0.3, 0.5, 0.7, 0.9}`.
+## The Math
 
-![gcguard demo](./demo.png)
+### FDFD Cavity Solver
+For a hollow PEC cavity, TM modes satisfy:
+```
+∇²E_z + k²E = 0
+∇²H_z + k²H = 0
+```
+Both share the same eigenvalue `k` — they are linked by Maxwell's equations.
 
----
+### Persistent Homology
+Convert field `|E(x,y)|` to a point cloud, compute H0/H1 barcodes:
+```
+Barcode: [(birth, death), ...]  — each bar = one topological feature
+```
 
-## License
+### Hilbert Series Coefficients
+```
+N(t) = Σ t^{birth} - Σ t^{death}
+```
+Polynomial encoding of the entire topological structure.
 
-MIT © gcguard contributors
+### God Tensor Fixed Point
+```
+T @ e_emb ≈ h_emb
+x_{n+1} = normalize(T @ x_n)
+x_* = lim_{n→∞} x_n
+T(x_*) = x_*   ← God Tensor
+```
+
+## Physics
+
+E and H generate each other (Faraday + Ampère-Maxwell):
+```
+∇ × E = -∂B/∂t
+∇ × H = +∂D/∂t
+```
+
+The God Tensor learns the **coupling invariant** from data. It discovers what Maxwell's equations already encode — but it discovers it from E × H co-determination, not from assuming the equations.
+
+## Why "Faraday"?
+
+Michael Faraday introduced the field concept — E and H as space-filling entities that generate each other. The **Faraday tensor** `F_μν` (in relativity) unifies them geometrically. This library *computes* that tensor from data.
+
+## Citation
+
+If this helps your research:
+```bibtex
+@software{faraday,
+  author = {Teerth Sharma},
+  title = {Computational Faraday Tensor},
+  url = {https://github.com/teerthsharma/faraday}
+}
+```
