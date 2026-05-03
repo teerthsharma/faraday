@@ -14,7 +14,6 @@ The God Tensor operates on these embeddings, not raw barcodes.
 from __future__ import annotations
 
 import math
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -24,7 +23,7 @@ log = get_logger(__name__)
 
 
 def barcode_to_coefficients(
-    barcode: List[Tuple[float, float]], degree: int = 50
+    barcode: list[tuple[float, float]], degree: int = 50
 ) -> np.ndarray:
     """
     Convert a barcode (birth-death pairs) to Hilbert series coefficients.
@@ -42,11 +41,11 @@ def barcode_to_coefficients(
     """
     coeffs = np.zeros(degree)
     for b, d in barcode:
-        ib = int(math.floor(b * degree))
+        ib = math.floor(b * degree)
         if 0 <= ib < degree:
             coeffs[ib] += 1.0
         if d != float("inf"):
-            id_ = int(math.floor(d * degree))
+            id_ = math.floor(d * degree)
             if 0 <= id_ < degree:
                 coeffs[id_] -= 1.0
     return coeffs
@@ -54,7 +53,7 @@ def barcode_to_coefficients(
 
 def barcode_from_field(
     field: np.ndarray, homology_dim: int = 0, threshold: float = 0.1
-) -> List[Tuple[float, float]]:
+) -> list[tuple[float, float]]:
     """
     Extract barcode directly from a 2D field.
     Used for quick signature extraction without full fingerprint.
@@ -71,7 +70,7 @@ def barcode_from_field(
     return []
 
 
-def embed_barcode(barcode: List[Tuple[float, float]], dim: int = 50) -> np.ndarray:
+def embed_barcode(barcode: list[tuple[float, float]], dim: int = 50) -> np.ndarray:
     """
     Convert barcode to fixed-length embedding vector.
 
@@ -89,7 +88,7 @@ def embed_barcode(barcode: List[Tuple[float, float]], dim: int = 50) -> np.ndarr
     return raw
 
 
-def embed_fingerprint(fp: Dict, dim: int = 50) -> np.ndarray:
+def embed_fingerprint(fp: dict, dim: int = 50) -> np.ndarray:
     """
     Convert a topological_fingerprint dict to a fixed-length embedding.
 
@@ -179,8 +178,8 @@ class ManifoldProjector:
         """
         self.input_dim = input_dim
         self.latent_dim = latent_dim
-        self.encoder_weights: Optional[np.ndarray] = None
-        self.decoder_weights: Optional[np.ndarray] = None
+        self.encoder_weights: np.ndarray | None = None
+        self.decoder_weights: np.ndarray | None = None
         self.is_trained = False
 
     def _init_weights(self):
@@ -209,7 +208,7 @@ class ManifoldProjector:
         out = np.maximum(out, 0)
         return out
 
-    def autoencode(self, x: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    def autoencode(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Full autoencoder pass: encode then decode."""
         z = self.encode(x)
         x_recon = self.decode(z)
@@ -223,7 +222,7 @@ class ManifoldProjector:
         if not self.is_trained:
             self._init_weights()
 
-        z, x_recon = self.autoencode(x)
+        _z, x_recon = self.autoencode(x)
         mse = float(np.mean((x - x_recon) ** 2))
         return mse
 
@@ -245,12 +244,12 @@ class ManifoldProjector:
 
     def fit(
         self,
-        embeddings: List[np.ndarray],
+        embeddings: list[np.ndarray],
         lr: float = 0.01,
         epochs: int = 100,
         batch_size: int = 8,
         verbose: bool = False,
-    ) -> List[float]:
+    ) -> list[float]:
         """
         Train the autoencoder on a collection of barcode embeddings.
 

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Dict, List, Tuple
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -46,10 +46,10 @@ class CavityGeometry:
     """
 
     shape: CavityShape
-    dims: Tuple[float, ...]
+    dims: tuple[float, ...]
     boundary_conditions: str = "pec"
 
-    def contains(self, x: "np.ndarray", y: "np.ndarray") -> "np.ndarray":
+    def contains(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """Return a boolean mask for points inside the cavity.
 
         Parameters
@@ -73,7 +73,7 @@ class CavityGeometry:
         msg = f"Unsupported cavity shape: {self.shape}"
         raise NotImplementedError(msg)
 
-    def interior_mask(self, X: "np.ndarray", Y: "np.ndarray") -> "np.ndarray":
+    def interior_mask(self, X: np.ndarray, Y: np.ndarray) -> np.ndarray:
         """Alias for :meth:`contains` with meshgrid inputs."""
         return self.contains(X, Y)
 
@@ -85,7 +85,7 @@ class CavityGeometry:
 
 def make_rectangular_grid(
     w: float, h: float, nx: int, ny: int
-) -> Tuple["np.ndarray", "np.ndarray"]:
+) -> tuple[np.ndarray, np.ndarray]:
     """Create a centred meshgrid for a rectangular cavity.
 
     Parameters
@@ -108,7 +108,7 @@ def make_rectangular_grid(
 
 def make_circular_grid(
     r: float, nx: int
-) -> Tuple["np.ndarray", "np.ndarray", "np.ndarray"]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Create a centred meshgrid for a circular cavity.
 
     Parameters
@@ -127,7 +127,7 @@ def make_circular_grid(
     """
     coord = np.linspace(-r, r, nx)
     X, Y = np.meshgrid(coord, coord)
-    interior = (X**2 + Y**2) <= r**2
+    interior = r**2 >= (X**2 + Y**2)
     return X, Y, interior
 
 
@@ -137,8 +137,8 @@ def make_circular_grid(
 
 
 def build_laplacian_2d(
-    nx: int, ny: int, dx: float, dy: float, interior: "np.ndarray"
-) -> "np.ndarray":
+    nx: int, ny: int, dx: float, dy: float, interior: np.ndarray
+) -> np.ndarray:
     """Build the 5-point finite-difference Laplacian for the 2D Helmholtz problem.
 
     The Laplacian applies the discrete approximation:
@@ -161,9 +161,9 @@ def build_laplacian_2d(
         Sparse CSR matrix of shape ``(nx * ny, nx * ny)`` representing the Laplacian.
     """
     n = nx * ny
-    row_idx: List[int] = []
-    col_idx: List[int] = []
-    data: List[float] = []
+    row_idx: list[int] = []
+    col_idx: list[int] = []
+    data: list[float] = []
 
     for j in range(ny):
         for i in range(nx):
@@ -208,7 +208,7 @@ def solve_cavity_modes(
     nx: int = 60,
     ny: int = 60,
     num_modes: int = 12,
-) -> "ModeData":
+) -> ModeData:
     """Solve for E and H eigenmodes of the cavity.
 
     Both share the same wave number *k* and spatial pattern structure —
@@ -221,7 +221,7 @@ def solve_cavity_modes(
         \\quad
         H_y = -\\frac{{i}}{{\\omega\\mu}} \\frac{{\\partial E_z}}{{\\partial x}}
 
-    The Poynting vector magnitude ``|S| = |E| × |H|`` is used as the
+    The Poynting vector magnitude ``|S| = |E| | |H|`` is used as the
     physically meaningful H-field proxy for topological analysis.
 
     Parameters
@@ -290,9 +290,9 @@ def solve_cavity_modes(
         k_values=k_values[valid_idx][:3].tolist(),
     )
 
-    e_modes: Dict[str, Dict] = {}
-    h_modes: Dict[str, Dict] = {}
-    s_modes: Dict[str, Dict] = {}
+    e_modes: dict[str, dict] = {}
+    h_modes: dict[str, dict] = {}
+    s_modes: dict[str, dict] = {}
 
     for count, i in enumerate(valid_idx):
         kk = k_values[i]
@@ -315,7 +315,7 @@ def solve_cavity_modes(
                     hx_map[j, ii] = abs(dex_dy) / omega
                     hy_map[j, ii] = abs(dex_dx) / omega
 
-        # Poynting vector magnitude: |S| = |E| × |H| (energy flux density)
+        # Poynting vector magnitude: |S| = |E| | |H| (energy flux density)
         h_mag = np.sqrt(hx_map**2 + hy_map**2)
         s_map = np.abs(e_map) * h_mag
 
@@ -342,7 +342,7 @@ def solve_cavity_modes(
             "ny": ny,
         }
 
-    result: Dict = {
+    result: dict = {
         "geometry": str(geometry.shape.value),
         "dims": geometry.dims,
         "nx": nx,
@@ -392,8 +392,8 @@ class EMWave:
         return np.sqrt(self.kx**2 + self.ky**2)
 
     def field_at(
-        self, x: "np.ndarray", y: "np.ndarray", t: float = 0.0
-    ) -> "np.ndarray":
+        self, x: np.ndarray, y: np.ndarray, t: float = 0.0
+    ) -> np.ndarray:
         """Evaluate the wave field at positions and time.
 
         Parameters
@@ -421,18 +421,18 @@ class WaveSuperposer:
     Both E and H fields are superposed together.
     """
 
-    def __init__(self, geometry: CavityGeometry, mode_data: Dict) -> None:
+    def __init__(self, geometry: CavityGeometry, mode_data: dict) -> None:
         self.geometry = geometry
         self.mode_data = mode_data
-        self.e_waves: List[EMWave] = []
-        self.h_waves: List[EMWave] = []
-        self.active_mode_idx: Optional[int] = None
+        self.e_waves: list[EMWave] = []
+        self.h_waves: list[EMWave] = []
+        self.active_mode_idx: int | None = None
         self.e_mode_amp: complex = 1.0 + 0j
         self.h_mode_amp: complex = 1.0 + 0j
 
     def add_e_mode(
         self, mode_idx: int, amplitude: complex = 1.0 + 0j
-    ) -> "WaveSuperposer":
+    ) -> WaveSuperposer:
         """Add an E-field eigenmode to the superposition."""
         modes = self.mode_data["e_modes"]
         key = f"mode_{mode_idx}"
@@ -445,7 +445,7 @@ class WaveSuperposer:
 
     def add_h_mode(
         self, mode_idx: int, amplitude: complex = 1.0 + 0j
-    ) -> "WaveSuperposer":
+    ) -> WaveSuperposer:
         """Add an H-field eigenmode to the superposition."""
         modes = self.mode_data["h_modes"]
         key = f"mode_{mode_idx}"
@@ -457,7 +457,7 @@ class WaveSuperposer:
 
     def add_e_wave(
         self, amplitude: complex, angle: float, wavelength: float, phase: float = 0.0
-    ) -> "WaveSuperposer":
+    ) -> WaveSuperposer:
         """Add a custom E-field plane wave."""
         k = 2 * np.pi / wavelength
         self.e_waves.append(
@@ -473,7 +473,7 @@ class WaveSuperposer:
 
     def add_h_wave(
         self, amplitude: complex, angle: float, wavelength: float, phase: float = 0.0
-    ) -> "WaveSuperposer":
+    ) -> WaveSuperposer:
         """Add a custom H-field plane wave."""
         k = 2 * np.pi / wavelength
         self.h_waves.append(
@@ -488,8 +488,8 @@ class WaveSuperposer:
         return self
 
     def e_field_at(
-        self, X: "np.ndarray", Y: "np.ndarray", t: float = 0.0
-    ) -> "np.ndarray":
+        self, X: np.ndarray, Y: np.ndarray, t: float = 0.0
+    ) -> np.ndarray:
         """Compute total E-field at grid positions and time."""
         total = np.zeros_like(X, dtype=complex)
         if self.active_mode_idx is not None:
@@ -501,8 +501,8 @@ class WaveSuperposer:
         return total
 
     def h_field_at(
-        self, X: "np.ndarray", Y: "np.ndarray", t: float = 0.0
-    ) -> "np.ndarray":
+        self, X: np.ndarray, Y: np.ndarray, t: float = 0.0
+    ) -> np.ndarray:
         """Compute total H-field at grid positions and time."""
         total = np.zeros_like(X, dtype=complex)
         if hasattr(self, "h_mode_amp"):
@@ -514,15 +514,15 @@ class WaveSuperposer:
         return total
 
     def poynting_vector(
-        self, X: "np.ndarray", Y: "np.ndarray", t: float = 0.0
-    ) -> "np.ndarray":
-        """Poynting vector magnitude ``|S| = |E| × |H|``."""
+        self, X: np.ndarray, Y: np.ndarray, t: float = 0.0
+    ) -> np.ndarray:
+        """Poynting vector magnitude ``|S| = |E| | |H|``."""
         E = self.e_field_at(X, Y, t)
         H = self.h_field_at(X, Y, t)
         return np.abs(E) * np.abs(H)
 
     def coupled_field_at(
-        self, X: "np.ndarray", Y: "np.ndarray", t: float = 0.0
-    ) -> Tuple["np.ndarray", "np.ndarray"]:
+        self, X: np.ndarray, Y: np.ndarray, t: float = 0.0
+    ) -> tuple[np.ndarray, np.ndarray]:
         """Return ``(E, H)`` coupled fields together."""
         return self.e_field_at(X, Y, t), self.h_field_at(X, Y, t)

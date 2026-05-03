@@ -31,13 +31,16 @@ class TestGodTensor:
     def test_god_tensor_fixed_point_convergence(self):
         from faraday import GodTensor
 
-        gt = GodTensor(n_geometries=5)
+        # Need enough geometries for T (16x16) to be full-rank in latent space.
+        # With n_geometries=20 and reasonable failure rate, expect >=15 valid samples.
+        gt = GodTensor(n_geometries=20)
         gt.collect_training_data(nx=15, ny=15, num_modes=2, seed=42)
         gt.learn_T()
         god = gt.find_fixed_point(iters=200, tol=1e-6)
         assert god.shape == (16,)
         assert gt.god_tensor is not None
-        assert gt.fixed_point_converged
+        # Convergence is expected with sufficient training data for a full-rank T
+        assert gt.fixed_point_converged, "T matrix should be full-rank with >=15 samples"
 
     def test_god_score(self):
         from faraday import GodTensor

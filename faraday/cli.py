@@ -11,24 +11,17 @@ config-show — Display the active configuration.
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Optional
-
 import click
 
-from faraday.exceptions import ConfigError
-
+from faraday.config import FaradayConfig
 
 # ----------------------------------------------------------------------
 # Helpers
 # ----------------------------------------------------------------------
 
 
-def _resolve_config(ctx: click.Context, param: click.Option, value: Optional[str]):
-    if value is None:
-        cfg = FaradayConfig.load()
-    else:
-        cfg = FaradayConfig.from_yaml(value)
+def _resolve_config(ctx: click.Context, param: click.Option, value: str | None):
+    cfg = FaradayConfig.load() if value is None else FaradayConfig.from_yaml(value)
     ctx.obj = getattr(ctx, "obj", {}) or {}
     ctx.obj["config"] = cfg
     return cfg
@@ -79,10 +72,10 @@ def solve(
     ctx: click.Context,
     width: float,
     height: float,
-    n_modes: Optional[int],
-    nx: Optional[int],
-    ny: Optional[int],
-    config_path: Optional[str],
+    n_modes: int | None,
+    nx: int | None,
+    ny: int | None,
+    config_path: str | None,
 ) -> None:
     """
     Run the FDFD cavity solver for a given geometry.
@@ -95,7 +88,7 @@ def solve(
     $ faraday solve --width 2.0 --height 1.0 --n-modes 4
     """
     # Lazy import to avoid circular reference during package init
-    from faraday import CavityGeometry, CavityShape, FaradayConfig, solve_cavity_modes
+    from faraday import CavityGeometry, CavityShape, solve_cavity_modes
 
     cfg: FaradayConfig = ctx.obj["config"]
     nx_val = nx if nx is not None else cfg.solver.nx
@@ -136,9 +129,9 @@ def solve(
 @click.pass_context
 def train(
     ctx: click.Context,
-    n_geometries: Optional[int],
-    iters: Optional[int],
-    config_path: Optional[str],
+    n_geometries: int | None,
+    iters: int | None,
+    config_path: str | None,
 ) -> None:
     """
     Collect training data and train the God Tensor.
@@ -152,7 +145,7 @@ def train(
     $ faraday train --n-geometries 30 --iters 100
     """
     # Lazy import to avoid circular reference during package init
-    from faraday import FaradayConfig, GodTensor
+    from faraday import GodTensor
 
     cfg: FaradayConfig = ctx.obj["config"]
     n_geo = n_geometries if n_geometries is not None else cfg.training.n_geometries
@@ -205,8 +198,8 @@ def predict(
     ctx: click.Context,
     width: float,
     height: float,
-    model_path: Optional[str],
-    config_path: Optional[str],
+    model_path: str | None,
+    config_path: str | None,
 ) -> None:
     """
     Predict E and H barcodes for a new geometry using the trained God Tensor.
@@ -216,7 +209,7 @@ def predict(
     $ faraday predict --width 2.5 --height 1.2 --model god_tensor_checkpoint.pkl
     """
     # Lazy import to avoid circular reference during package init
-    from faraday import CavityGeometry, CavityShape, FaradayConfig, GodTensor
+    from faraday import GodTensor
 
     cfg: FaradayConfig = ctx.obj["config"]
 
@@ -231,7 +224,6 @@ def predict(
         click.echo(f"[faraday predict] Loading model from {model_path}")
         gt = GodTensor.load(model_path)
 
-    geometry = CavityGeometry(shape=CavityShape.RECTANGULAR, dims=(width, height))
     barcode = gt.predict(w=width, h=height)
 
     click.echo(f"\nPredicted E-field barcode for geometry ({width} x {height}):")
@@ -259,7 +251,7 @@ def predict(
 @click.pass_context
 def config_show(
     ctx: click.Context,
-    config_path: Optional[str],
+    config_path: str | None,
     as_yaml: bool,
 ) -> None:
     """
