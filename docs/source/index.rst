@@ -8,7 +8,7 @@ via topology-fixed-point projection. The core concept is the **God Tensor**: the
 point where electric and magnetic field signatures co-determine each other.
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 3
    :caption: Contents:
 
    installation

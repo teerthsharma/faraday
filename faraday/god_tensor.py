@@ -203,46 +203,61 @@ class GodTensor:
 
     def find_fixed_point(self, iters: int = 500, tol: float = 1e-7) -> np.ndarray:
         """
-        Find the fixed point of T: iterate until T(T(x)) ≈ T(x).
+        Find the fixed point of T: the eigenvector with eigenvalue closest to 1.
 
-        Algorithm:
-            x_0 = mean of all E embeddings
-            for n in range(iters):
-                x_{n+1} = normalize(T @ x_n)
-            until ||x_{n+1} - x_n|| < tol
+        The God Tensor is the fixed point x* where T(x*) = x*.
+        This is the eigenvector of T with eigenvalue λ = 1.
 
-        The converged x_* is the God Tensor — the invariant subspace of T.
-        It is the point in the embedding space that T maps to itself,
-        and that E and H both converge to under repeated application.
+        Since a learned T may not have an exact eigenvalue of 1, this method
+        uses two strategies:
+
+        1. Direct eigendecomposition: find the eigenvector whose eigenvalue
+           is closest to 1 (most isometric coupling direction).
+        2. Power iteration: refine the eigenvector via iterative normalization.
+
+        The final god_tensor is the sign-invariant eigenvector of T.
 
         Args:
-            iters: max iterations
-            tol: convergence tolerance
+            iters: max power-iteration refinement passes
+            tol: convergence tolerance for power iteration refinement
 
         Returns:
-            god_tensor: the fixed point vector
+            god_tensor: the fixed-point eigenvector
         """
         if self.T_matrix is None:
             self.learn_T()
 
         T = self.T_matrix
-        latent_dim = T.shape[0]
 
-        # Start from the mean of all training embeddings
-        E_all = np.array([s.e_embedding for s in self.samples])
-        E_latent_all = np.array([self.projector_e.encode(e) for e in E_all])
-        x = np.mean(E_latent_all, axis=0)
+        # Strategy 1: direct eigendecomposition
+        # Find eigenvector closest to eigenvalue 1 via Rayleigh quotient
+        eigenvalues, eigenvectors = np.linalg.eig(T)
+
+        # Rayleigh quotient of each eigenvector for eigenvalue 1
+        # r_i = (x_i^T T x_i) / (x_i^T x_i)  should equal λ_i
+        # We find eigenvector minimizing |λ_i - 1|
+        eigenvalue_distances = np.abs(eigenvalues - 1.0)
+        best_idx = int(np.argmin(eigenvalue_distances))
+        x = np.real(eigenvectors[:, best_idx])
         x = x / (np.linalg.norm(x) + 1e-10)
 
-        log.info("fixed_point_iteration_start", iters=iters, tol=tol, latent_dim=latent_dim)
+        log.info(
+            "fixed_point_eigenvector_found",
+            eigenvalue=float(np.real(eigenvalues[best_idx])),
+            eigenvalue_dist=float(eigenvalue_distances[best_idx]),
+            latent_dim=T.shape[0],
+        )
 
+        # Strategy 2: power-iteration refinement (for numeric stability)
         for i in range(iters):
             x_new = T @ x
             norm = np.linalg.norm(x_new)
             if norm > 1e-10:
                 x_new = x_new / norm
 
-            delta = float(np.linalg.norm(x_new - x))
+            # Sign-invariant delta: convergence to eigenvector, not ±eigenvector
+            sign_correction = 1.0 if np.dot(x_new, x) >= 0 else -1.0
+            delta = float(np.linalg.norm(x_new - sign_correction * x))
             self.convergence_history.append(
                 {"iter": i, "delta": delta, "norm": float(norm)}
             )
@@ -250,12 +265,19 @@ class GodTensor:
             if delta < tol:
                 log.info("fixed_point_converged", iter=i, delta=delta)
                 self.fixed_point_converged = True
+                x = sign_correction * x_new
                 break
 
-            x = x_new
+            x = sign_correction * x_new
 
             if (i + 1) % 100 == 0:
                 log.debug("fixed_point_progress", iter=i + 1, delta=delta)
+        else:
+            log.warning(
+                "fixed_point_iteration_max_iters",
+                final_delta=delta,
+                note="Proceeding with best eigenvector from spectral analysis",
+            )
 
         self.god_tensor = x
 
