@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Teerth Sharma. All rights reserved.
+# Attribution: Computational Faraday Tensor by Teerth Sharma (https://github.com/teerthsharma)
+#
 """
 Faraday Demo — The God Tensor in Action
 

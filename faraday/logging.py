@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Teerth Sharma. All rights reserved.
+# Attribution: Computational Faraday Tensor by Teerth Sharma (https://github.com/teerthsharma)
+#
 """
 faraday.logging — Structured logging setup for the faraday package.
 

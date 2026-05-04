@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Teerth Sharma. All rights reserved.
+# Attribution: Computational Faraday Tensor by Teerth Sharma (https://github.com/teerthsharma)
+#
 """
 faraday.exceptions — Typed exception hierarchy for the faraday package.
 
