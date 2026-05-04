@@ -40,6 +40,10 @@ from faraday.barcode import (
     field_to_pointcloud,
     topological_fingerprint,
 )
+from faraday.benchmarking import (
+    ValidationReport,
+    run_validation_experiment,
+)
 
 # CLI entry point
 from faraday.cli import cli_main
@@ -101,8 +105,10 @@ __all__ = sorted([
     "GodTensor",
     "ManifoldProjector",
     "predict_eh_barcode",
+    "run_validation_experiment",
     "solve_cavity_modes",
     "topological_fingerprint",
+    "ValidationReport",
     "WaveSuperposer",
 ])
 
