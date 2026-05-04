@@ -118,7 +118,9 @@ class GodTensor:
 
             # Solve cavity modes
             try:
-                mode_data = solve_cavity_modes(geom, nx=nx, ny=ny, num_modes=num_modes)
+                mode_data = solve_cavity_modes(
+                    geom, nx=nx, ny=ny, num_modes=num_modes, seed=seed
+                )
             except Exception as e:
                 log.warning("geometry_solve_failed", params=params, error=str(e))
                 continue
