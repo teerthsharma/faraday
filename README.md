@@ -177,7 +177,7 @@ medium-42     40      10     0.4257      0.000        0.000         100%
   Low convergence with high n_test is expected for heterogeneous geometries.
 ```
 
-**E/H Betti-0 prediction error is consistently 0.000** — the KNN interpolation correctly recovers the topological structure of unseen cavity modes. The `god_score` (0.15–0.66) reflects how well the fixed point unifies training embeddings, not prediction accuracy.
+**E/H Betti-0 prediction error is consistently 0.000** — the KNN interpolation correctly recovers the topological structure of unseen cavity modes. The `god_score` reflects how well the fixed point unifies training embeddings (higher = better coupling on the training set). All experiments use a seeded eigenvalue solver (`eigsh`) so `god_score` is reproducible across runs.
 
 Run the full suite:
 

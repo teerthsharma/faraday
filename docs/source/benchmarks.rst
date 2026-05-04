@@ -113,7 +113,8 @@ comparison of E/H Betti-0 numbers and coupling strength.
 
 \* Convergence rate measures what fraction of held-out geometries have
 ``god_distance < 1.0``. Low rates on small suites reflect heterogeneous
-test splits with only 3–4 samples, not model failure.
+test splits with only 3–4 samples, not model failure. All runs use a
+seeded eigenvalue solver so results are reproducible.
 
 **Key result: E/H Betti-0 prediction error is consistently 0.000 across
 all suites and seeds.** The KNN interpolator correctly recovers the
