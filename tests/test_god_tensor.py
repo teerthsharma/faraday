@@ -186,3 +186,100 @@ class TestIntegration:
 
         # Predicted betti_0 should be non-negative
         assert pred["knn_e_fingerprint"]["betti_0"] >= 0
+
+
+class TestValidationExperiment:
+    """Tests for held-out generalization experiments."""
+
+    def test_validation_experiment_runs(self):
+        """Smoke test: the held-out experiment completes without error."""
+        from faraday.benchmarking import run_validation_experiment
+
+        report = run_validation_experiment(
+            n_total=20,
+            train_fraction=0.75,
+            nx=15,
+            ny=15,
+            num_modes=2,
+            seed=42,
+        )
+
+        assert report.n_train >= 5, "Need at least 5 training samples"
+        assert report.n_test >= 1, "Need at least 1 held-out geometry"
+        assert report.train_god_score >= 0.0
+        assert report.train_god_score <= 1.0
+        assert 0.0 <= report.convergence_rate <= 1.0
+
+    def test_validation_experiment_80_20_split(self):
+        """80/20 split produces approximately correct counts."""
+        from faraday.benchmarking import run_validation_experiment
+
+        report = run_validation_experiment(
+            n_total=20,
+            train_fraction=0.8,
+            nx=15,
+            ny=15,
+            num_modes=2,
+            seed=99,
+        )
+
+        # Allow some slack: FDFD failures mean n_total isn't exact
+        assert report.n_train >= 10, f"Expected ~16 train, got {report.n_train}"
+        assert report.n_test >= 1, f"Expected ~4 test, got {report.n_test}"
+
+    def test_validation_experiment_reproducible(self):
+        """Same seed produces the same experiment structure and counts."""
+        from faraday.benchmarking import run_validation_experiment
+
+        r1 = run_validation_experiment(
+            n_total=10, train_fraction=0.8, nx=15, ny=15, num_modes=2, seed=7
+        )
+        r2 = run_validation_experiment(
+            n_total=10, train_fraction=0.8, nx=15, ny=15, num_modes=2, seed=7
+        )
+
+        # Counts are deterministic from seed + geometry generation
+        assert r1.n_train == r2.n_train
+        assert r1.n_test == r2.n_test
+        # Per-geometry results are deterministic
+        assert len(r1.per_geometry) == len(r2.per_geometry)
+        for p1, p2 in zip(r1.per_geometry, r2.per_geometry):
+            assert p1["geometry"] == p2["geometry"]
+            assert p1["e_error"] == p2["e_error"]
+            assert p1["h_error"] == p2["h_error"]
+
+    def test_validation_report_summary(self):
+        """ValidationReport.summary() returns a non-empty string."""
+        from faraday.benchmarking import run_validation_experiment
+
+        report = run_validation_experiment(
+            n_total=10, train_fraction=0.8, nx=15, ny=15, num_modes=2, seed=55
+        )
+        summary = report.summary()
+        assert isinstance(summary, str)
+        assert len(summary) > 0
+        assert "train" in summary.lower()
+        assert "test" in summary.lower()
+
+    def test_validation_report_to_dict(self):
+        """ValidationReport serialises to dict cleanly."""
+        from faraday.benchmarking import run_validation_experiment
+
+        report = run_validation_experiment(
+            n_total=10, train_fraction=0.8, nx=15, ny=15, num_modes=2, seed=123
+        )
+        d = report.to_dict()
+        assert isinstance(d, dict)
+        assert d["n_train"] == report.n_train
+        assert d["n_test"] == report.n_test
+        assert "per_geometry" in d
+
+    def test_run_suite_with_validation(self):
+        """run_suite(include_validation=True) returns BenchmarkReport + ValidationReport."""
+        from faraday.benchmarking import run_suite
+
+        bench, val = run_suite(suite_name="micro", include_validation=True)
+        assert bench is not None
+        assert val.n_train >= 1
+        assert val.n_test >= 1
+        assert val.train_god_score >= 0.0
