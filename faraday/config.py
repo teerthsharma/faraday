@@ -206,10 +206,10 @@ def _sub_config(name: str, data: dict[str, Any]) -> Any:
         "topology": TopologyConfig,
         "logging": LoggingConfig,
     }
-    cls = mapping.get(name)
+    cls: type = mapping.get(name)  # type: ignore[assignment]
     if cls is None:
         raise ConfigError(f"unknown config section: {name!r}")  # pragma: no cover
-    valid = set(cls.__dataclass_fields__)
+    valid = set(f.name for f in cls.__dataclass_fields__.values())
     unknown = set(data.keys()) - valid
     if unknown:
         raise ConfigError(

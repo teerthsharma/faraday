@@ -10,48 +10,79 @@ across all modules.
 
 from __future__ import annotations
 
-from typing import TypeAlias
+from typing import Any
 
 import numpy as np
 
-# --------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# TypedDict stub for ModeData (avoids circular import at type-check time)
+# ---------------------------------------------------------------------------
+
+class ModeData(dict[str, Any]):
+    """
+    Return type of ``solve_cavity_modes``.
+
+    Attributes
+    ----------
+    geometry : str
+        Shape name e.g. ``"rectangular"``.
+    dims : tuple[float, ...]
+        Physical dimensions.
+    nx, ny : int
+        Grid resolution.
+    num_modes_found : int
+        Number of valid modes.
+    k_values : list[float]
+        Wave numbers for valid modes.
+    e_modes : dict[str, Any]
+        E-field mode data keyed by mode name.
+    h_modes : dict[str, Any]
+        H-field (magnitude) mode data keyed by mode name.
+    s_modes : dict[str, Any]
+        Poynting vector mode data keyed by mode name.
+    X, Y : list[list[float]]
+        Grid coordinates.
+    interior : list[list[bool]]
+        Interior mask.
+    """
+    pass
+
+
+# ---------------------------------------------------------------------------
 # Array types
-# --------------------------------------------------------------------
-#: 2D float array (typical field grid)
-NDArrayFloat2D: TypeAlias = np.ndarray
-
-#: 1D float array
-NDArrayFloat1D: TypeAlias = np.ndarray
-
-#: 2D complex array (typical complex field)
-NDArrayComplex2D: TypeAlias = np.ndarray
+# ---------------------------------------------------------------------------
 
 #: Generic float array (any dimension)
-NDArrayFloat: TypeAlias = np.ndarray
+NDArrayFloat = np.ndarray
 
-# --------------------------------------------------------------------
+#: 2D float array
+NDArrayFloat2D = np.ndarray
+
+#: 1D float array
+NDArrayFloat1D = np.ndarray
+
+#: 2D complex array
+NDArrayComplex2D = np.ndarray
+
+# ---------------------------------------------------------------------------
 # Domain-specific types
-# --------------------------------------------------------------------
-#: A persistent homology barcode: list of (birth, death) float pairs
-Barcode: TypeAlias = list[tuple[float, float]]
+# ---------------------------------------------------------------------------
 
-#: A topological fingerprint dict (returned by barcode.topological_fingerprint)
-Fingerprint: TypeAlias = dict[str, object]
+#: Persistent homology barcode
+Barcode = list[tuple[float, float]]
 
-#: A fixed-length barcode embedding vector (from manifold_projector)
-Embedding: TypeAlias = np.ndarray
+#: Topological fingerprint dict
+Fingerprint = dict[str, Any]
 
-#: Geometry parameters: (w, h) for rectangular, (r,) for circular
-GeometryParams: TypeAlias = tuple[float, ...]
+#: Fixed-length barcode embedding vector
+Embedding = np.ndarray
 
-# --------------------------------------------------------------------
-# Solvers
-# --------------------------------------------------------------------
-#: Mode data dict returned by solve_cavity_modes
-ModeData: TypeAlias = dict[str, object]
+#: Geometry parameters
+GeometryParams = tuple[float, ...]
 
-# --------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # God Tensor
-# --------------------------------------------------------------------
-#: Training sample dict representation (for serialization)
-SampleDict: TypeAlias = dict[str, object]
+# ---------------------------------------------------------------------------
+
+#: Training sample dict representation
+SampleDict = dict[str, Any]
