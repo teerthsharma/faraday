@@ -547,6 +547,8 @@ def run_burn(
     num_modes: int = 8,
     seed: int = 42,
     log_every: int = 1,
+    resume_from: int | None = None,
+    checkpoint_path: str | None = None,
 ) -> None:
     """
     Run the Banach fixed-point burn-in for exactly ``epochs`` iterations.
@@ -575,37 +577,56 @@ def run_burn(
     log_every : int
         Emit a JSON log line every ``log_every`` epochs.  Always 1 for
         production burn runs (required by the daemon).
+    resume_from : int | None
+        If set, resume from this epoch number instead of starting at 1.
+        Requires ``checkpoint_path`` to be set.
+    checkpoint_path : str | None
+        Path to checkpoint .npz file. Used for both saving (when
+        ``resume_from`` is None) and loading (when ``resume_from`` is set).
     """
     import sys
     import math as _math
     from faraday.logging import get_logger
 
     burn_log = get_logger("faraday.burn")
-    burn_log.info("burn_start", epochs=epochs, dim=dim, n_geometries=n_geometries)
+    burn_log.info("burn_start", epochs=epochs, dim=dim, n_geometries=n_geometries,
+                  resume_from=resume_from)
 
-    # ── Phase 1: Collect training data ───────────────────────────────────
-    gt = GodTensor(n_geometries=n_geometries)
-    gt.collect_training_data(nx=nx, ny=ny, num_modes=num_modes, seed=seed)
+    # ── Phase 1: Collect training data (skipped on resume) ─────────────────
+    if resume_from is None:
+        gt = GodTensor(n_geometries=n_geometries)
+        gt.collect_training_data(nx=nx, ny=ny, num_modes=num_modes, seed=seed)
+        # ── Phase 2: Learn T matrix ─────────────────────────────────────────
+        gt.learn_T()
+        # Initialise god_tensor from dominant eigenvector of T
+        eigenvalues, eigenvectors = np.linalg.eig(gt.T_matrix)
+        dists = np.abs(eigenvalues - 1.0)
+        best_idx = int(np.argmin(dists))
+        god_tensor = np.real(eigenvectors[:, best_idx])
+        god_tensor = god_tensor / (np.linalg.norm(god_tensor) + 1e-10)
+        gt.god_tensor = god_tensor
+        rng = np.random.default_rng(seed)
+        start_epoch = 0
+    else:
+        # Load checkpoint: restore god_tensor, epoch, RNG state
+        god_tensor, start_epoch, rng_state = GodTensor.load_checkpoint(checkpoint_path)
+        # Reconstruct gt for Betti computation (need samples + T + projectors)
+        # We reload from the full GodTensor pickle (the full object, not just npz)
+        gt_path = checkpoint_path.replace(".npz", "_gt.pkl")
+        try:
+            gt = GodTensor.load(gt_path)
+        except FileNotFoundError:
+            burn_log.error("checkpoint_gt_not_found", path=gt_path)
+            sys.exit(1)
+        rng = np.random.default_rng(0)
+        rng.bit_generator.state = rng_state
+        burn_log.info("resumed", from_epoch=start_epoch)
 
-    # Build reference Betti numbers from training set
-    betti_0_ref = [s.e_fingerprint.get("betti_0", 0) for s in gt.samples]
-    betti_1_ref = [s.e_fingerprint.get("betti_1", 0) for s in gt.samples]
+    # ── Phase 3: Banach fixed-point burn loop ────────────────────────────
+    # x IS the god_tensor (current fixed-point estimate)
+    x = god_tensor.copy()
 
-    # ── Phase 2: Learn T matrix ─────────────────────────────────────────
-    gt.learn_T()
-
-    # ── Phase 3: Banach fixed-point burn loop ───────────────────────────
-    # Initialise from dominant eigenvector of T
-    eigenvalues, eigenvectors = np.linalg.eig(gt.T_matrix)
-    dists = np.abs(eigenvalues - 1.0)
-    best_idx = int(np.argmin(dists))
-    x = np.real(eigenvectors[:, best_idx])
-    x = x / (np.linalg.norm(x) + 1e-10)
-
-    prev_x = x.copy()
-    rng = np.random.default_rng(seed)
-
-    for epoch in range(1, epochs + 1):
+    for epoch in range(start_epoch + 1, epochs + 1):
         # Banach step: T(x) then normalise
         x_new = gt.T_matrix @ x
         norm = np.linalg.norm(x_new)
@@ -670,6 +691,14 @@ def run_burn(
             noise = rng.normal(0, 1e-8, size=x.shape)
             x = x + noise
             x = x / (np.linalg.norm(x) + 1e-10)
+
+        # Save checkpoint every 10k epochs
+        if checkpoint_path is not None and epoch % 10_000 == 0:
+            gt.god_tensor = x
+            rng_state = rng.bit_generator.state
+            gt.save_checkpoint(checkpoint_path, epoch, rng_state)
+            gt.save(checkpoint_path.replace(".npz", "_gt.pkl"))
+            burn_log.info("checkpoint_saved", epoch=epoch, path=checkpoint_path)
 
     burn_log.info("burn_complete", epochs=epochs)
 
@@ -756,6 +785,20 @@ def cli_main():
         default=42,
         help="Random seed (burn mode)",
     )
+    parser.add_argument(
+        "--resume-from",
+        type=int,
+        default=None,
+        dest="resume_from",
+        help="Resume from this epoch number (requires --checkpoint-path)",
+    )
+    parser.add_argument(
+        "--checkpoint-path",
+        type=str,
+        default=None,
+        dest="checkpoint_path",
+        help="Path for checkpoint .npz files",
+    )
     args = parser.parse_args()
 
     # ── Burn mode ────────────────────────────────────────────────────────
@@ -769,6 +812,8 @@ def cli_main():
             num_modes=args.num_modes,
             seed=args.seed,
             log_every=1,
+            resume_from=args.resume_from,
+            checkpoint_path=args.checkpoint_path,
         )
         return
 
