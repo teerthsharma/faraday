@@ -99,6 +99,8 @@ def _git_runner(git_dir: Path):
 # Ledger writer — append-only, thread-safe via file.seek
 # ---------------------------------------------------------------------------
 
+import hashlib
+
 class LedgerWriter:
     """
     Appends rows to transcript.csv and convergence_log.jsonl.
@@ -115,9 +117,23 @@ class LedgerWriter:
         self._csv_path   = csv_path
         self._jsonl_path = jsonl_path
         self._skip_until = skip_until
+        self._last_hash  = "0000000000000000000000000000000000000000000000000000000000000000"
 
         # Ensure directory exists
         csv_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Attempt to recover the last hash from the CSV on resume
+        if csv_path.exists() and skip_until > 0:
+            try:
+                # Read the last line of the CSV to get the previous hash
+                with open(csv_path, "r", newline="") as fh:
+                    lines = fh.readlines()
+                    if len(lines) > 1:
+                        last_line = lines[-1].strip().split(",")
+                        if len(last_line) >= 7:
+                            self._last_hash = last_line[6]
+            except Exception:
+                pass
 
         # Write CSV header only if the file does not exist
         if not csv_path.exists():
@@ -126,7 +142,7 @@ class LedgerWriter:
                     fh,
                     fieldnames=[
                         "epoch", "banach_loss", "betti_0_err",
-                        "betti_1_err", "betti_2_err", "timestamp",
+                        "betti_1_err", "betti_2_err", "timestamp", "hash"
                     ],
                 )
                 writer.writeheader()
@@ -139,7 +155,7 @@ class LedgerWriter:
             self._csv_fh,
             fieldnames=[
                 "epoch", "banach_loss", "betti_0_err",
-                "betti_1_err", "betti_2_err", "timestamp",
+                "betti_1_err", "betti_2_err", "timestamp", "hash"
             ],
         )
 
@@ -148,6 +164,12 @@ class LedgerWriter:
         epoch = record.get("epoch", 0)
         if epoch <= self._skip_until:
             return
+
+        # Cryptographic Hash Chain
+        data_str = f"{epoch}|{record.get('banach_loss')}|{record.get('betti_0_err')}|{record.get('betti_1_err')}|{record.get('betti_2_err')}|{record.get('timestamp')}|{self._last_hash}"
+        current_hash = hashlib.sha256(data_str.encode('utf-8')).hexdigest()
+        self._last_hash = current_hash
+        record["hash"] = current_hash
 
         # CSV
         self._csv_fh.seek(0, os.SEEK_END)
@@ -158,6 +180,7 @@ class LedgerWriter:
             "betti_1_err":  record.get("betti_1_err", ""),
             "betti_2_err":  record.get("betti_2_err", ""),
             "timestamp":    record.get("timestamp", ""),
+            "hash":         record.get("hash", ""),
         })
         self._csv_fh.flush()
 
@@ -344,8 +367,8 @@ def dump_fatal_divergence(
         "",
         "## Last 100 Epoch Records",
         "",
-        "| Epoch | Banach Loss | Betti-0 Err | Betti-1 Err | Betti-2 Err | Timestamp |",
-        "|------:|------------:|------------:|------------:|------------:|-----------|",
+        "| Epoch | Banach Loss | Betti-0 Err | Betti-1 Err | Betti-2 Err | Timestamp | Hash |",
+        "|------:|------------:|------------:|------------:|------------:|-----------|------|",
     ]
 
     for rec in records[-100:]:
@@ -355,7 +378,8 @@ def dump_fatal_divergence(
             f"| {rec.get('betti_0_err', '')} "
             f"| {rec.get('betti_1_err', '')} "
             f"| {rec.get('betti_2_err', '')} "
-            f"| {rec.get('timestamp', '')} |"
+            f"| {rec.get('timestamp', '')} "
+            f"| {rec.get('hash', '')} |"
         )
 
     output_path.write_text("\n".join(lines) + "\n")
