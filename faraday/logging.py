@@ -30,7 +30,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable, Iterable, Any, MutableMapping
 
 import structlog
 
@@ -52,7 +52,7 @@ _IS_QUIET = os.environ.get("FARADAY_QUIET", "0") == "1"
 
 def _configure_structlog() -> None:
     """Configure structlog processors and loggers."""
-    processors = [
+    processors: list[Callable[..., Any]] = [
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_log_level,
         structlog.stdlib.PositionalArgumentsFormatter(),
@@ -66,7 +66,7 @@ def _configure_structlog() -> None:
     else:
         processors.append(structlog.dev.ConsoleRenderer())
 
-    structlog.configure(
+    structlog.configure(  # type: ignore[arg-type]
         processors=processors,
         wrapper_class=structlog.stdlib.BoundLogger,
         context_class=dict,

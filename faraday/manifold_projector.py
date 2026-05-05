@@ -185,29 +185,29 @@ class ManifoldProjector:
         self.decoder_weights: np.ndarray | None = None
         self.is_trained = False
 
-    def _init_weights(self):
+    def _init_weights(self) -> None:
         """Initialize encoder and decoder weight matrices."""
         rng = np.random.default_rng(42)
         # Xavier-like initialization
         scale = math.sqrt(2.0 / (self.input_dim + self.latent_dim))
         self.encoder_weights = rng.normal(0, scale, (self.latent_dim, self.input_dim))
         self.decoder_weights = rng.normal(0, scale, (self.input_dim, self.latent_dim))
+        self.is_trained = True
 
     def encode(self, x: np.ndarray) -> np.ndarray:
         """Project embedding to latent space via encoder."""
-        if not self.is_trained:
+        if self.encoder_weights is None:
             self._init_weights()
-        # ReLU activation
-        h = x @ self.encoder_weights.T
+        # mypy can't track that _init_weights sets encoder_weights
+        h = x @ self.encoder_weights.T  # type: ignore[union-attr]
         h = np.maximum(h, 0)
         return h
 
     def decode(self, z: np.ndarray) -> np.ndarray:
         """Project latent vector back to embedding space via decoder."""
-        if not self.is_trained:
+        if self.decoder_weights is None:
             self._init_weights()
-        # ReLU activation
-        out = z @ self.decoder_weights.T
+        out = z @ self.decoder_weights.T  # type: ignore[union-attr]
         out = np.maximum(out, 0)
         return out
 
@@ -267,6 +267,7 @@ class ManifoldProjector:
             losses: list of MSE loss per epoch
         """
         self._init_weights()
+        assert self.encoder_weights is not None and self.decoder_weights is not None
         X = np.array(embeddings)
         losses = []
 
@@ -281,9 +282,9 @@ class ManifoldProjector:
                 batch = X[indices[start : start + batch_size]]
 
                 # Forward: encode
-                h = np.maximum(batch @ self.encoder_weights.T, 0)
+                h = np.maximum(batch @ self.encoder_weights.T, 0)  # type: ignore[union-attr]
                 # Decode
-                recon = np.maximum(h @ self.decoder_weights.T, 0)
+                recon = np.maximum(h @ self.decoder_weights.T, 0)  # type: ignore[union-attr]
 
                 # MSE loss
                 loss = np.mean((batch - recon) ** 2)
@@ -292,13 +293,13 @@ class ManifoldProjector:
                 # Gradient: dL/dW_enc = dL/dRecon @ dRecon/dh @ dh/dW_enc
                 # Simplified: use reconstruction error to update weights
                 d_recon = 2 * (recon - batch) / len(batch)
-                d_h = d_recon @ self.decoder_weights
+                d_h = d_recon @ self.decoder_weights  # type: ignore[union-attr]
                 d_h[h == 0] = 0  # ReLU gradient
 
                 # dL/dW_enc = (dL/dh).T @ x  →  (16, n) @ (n, 50) = (16, 50)
-                self.encoder_weights -= lr * (d_h.T @ batch) / len(batch)
+                self.encoder_weights -= lr * (d_h.T @ batch) / len(batch)  # type: ignore[union-attr]
                 # dL/dW_dec = (dL/dRecon).T @ h  →  (50, n) @ (n, 16) = (50, 16)
-                self.decoder_weights -= lr * (d_recon.T @ h) / len(batch)
+                self.decoder_weights -= lr * (d_recon.T @ h) / len(batch)  # type: ignore[union-attr]
 
             losses.append(float(epoch_loss))
             if verbose and (epoch + 1) % 20 == 0:

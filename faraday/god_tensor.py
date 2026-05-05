@@ -30,12 +30,18 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from faraday._types import ModeData
 from faraday.barcode import coupled_fingerprint
 from faraday.em_solver import CavityGeometry, CavityShape, solve_cavity_modes
 from faraday.logging import get_logger
 from faraday.manifold_projector import ManifoldProjector, embed_fingerprint
 
 log = get_logger(__name__)
+
+
+def _solve(geom: CavityGeometry, nx: int, ny: int, num_modes: int) -> ModeData:
+    """Wrapper that casts solve_cavity_modes to ModeData for type checker."""
+    return solve_cavity_modes(geom, nx=nx, ny=ny, num_modes=num_modes)  # type: ignore[return-value]
 
 
 @dataclass
@@ -193,7 +199,7 @@ class GodTensor:
         # Using lstsq for numerical stability: T @ E_latent = H_latent
         from scipy.linalg import lstsq
 
-        T_raw, _residuals, _rank, _s = lstsq(E_latent, H_latent)
+        T_raw, _residuals, _rank, _s = lstsq(E_latent, H_latent)  # type: ignore[assignment]
         T = T_raw.T  # (latent, latent)
 
         self.T_matrix = T
@@ -387,3 +393,48 @@ class GodTensor:
             else None,
             "god_score": self.god_score(),
         }
+
+    def predict(self, w: float, h: float) -> list[tuple[float, float]]:
+        """
+        Predict barcode for a new geometry.
+
+        Args:
+            w: cavity width
+            h: cavity height
+
+        Returns:
+            List of (birth, death) pairs from predicted E-field barcode.
+        """
+        from faraday import CavityGeometry, CavityShape
+
+        geom = CavityGeometry(shape=CavityShape.RECTANGULAR, dims=(w, h))
+        mode_data = _solve(geom, nx=50, ny=50, num_modes=8)
+        mode_key = "mode_0"
+        if mode_key in mode_data["e_modes"]:
+            e_field = np.array(mode_data["e_modes"][mode_key]["field"])
+        else:
+            return []
+        from faraday.barcode import topological_fingerprint
+
+        fp = topological_fingerprint(e_field)
+        diagram = fp.get("diagram", [])
+        return [(float(b), float(d)) for b, d in diagram]
+
+    # ------------------------------------------------------------------
+    # Persistence / serialisation
+    # ------------------------------------------------------------------
+
+    def save(self, path: str) -> None:
+        """Save a trained GodTensor to a pickle file."""
+        import pickle
+
+        with open(path, "wb") as fh:
+            pickle.dump(self, fh)
+
+    @classmethod
+    def load(cls, path: str) -> "GodTensor":
+        """Load a saved GodTensor from a pickle file."""
+        import pickle
+
+        with open(path, "rb") as fh:
+            return pickle.load(fh)

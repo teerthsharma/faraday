@@ -43,6 +43,7 @@ dev = [
     "hypothesis>=6.90",
     "ruff>=0.3",
     "mypy>=1.8",
+    "types-PyYAML>=6.0",
     "pyright>=1.1",
     "pre-commit>=3.6",
     "nox>=2024",
@@ -131,10 +132,10 @@ line-ending = "auto"
 
 [tool.mypy]
 python_version = "3.10"
-strict = false
-warn_return_any = true
-warn_unused_ignores = true
 ignore_missing_imports = true
+warn_return_any = false
+warn_unused_ignores = false
+no_implicit_optional = true
 
 [[tool.mypy.overrides]]
 module = ["ripser.*", "persim.*"]

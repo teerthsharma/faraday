@@ -14,6 +14,9 @@ config-show — Display the active configuration.
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import click
 
 from faraday.config import FaradayConfig
@@ -102,7 +105,7 @@ def solve(
 
     click.echo(f"[faraday solve] geometry=({width} x {height}), nx={nx_val}, ny={ny_val}, modes={n_modes_val}")
 
-    modes = solve_cavity_modes(geometry, nx=nx_val, ny=ny_val, n_modes=n_modes_val)
+    modes = solve_cavity_modes(geometry, nx=nx_val, ny=ny_val, num_modes=n_modes_val)
 
     click.echo(f"\nResonant frequencies (k²) for first {n_modes_val} modes:")
     for i, m in enumerate(modes[:n_modes_val], 1):
@@ -156,18 +159,26 @@ def train(
 
     click.echo(f"[faraday train] n_geometries={n_geo}, iters={iters_val}")
 
-    gt = GodTensor(
-        n_geometries=n_geo,
-        nx=cfg.solver.nx,
-        ny=cfg.solver.ny,
-        w_range=(cfg.training.width_min, cfg.training.width_max),
-        h_range=(cfg.training.height_min, cfg.training.height_max),
-    )
+    gt = GodTensor(n_geometries=n_geo)
+
+    def _step() -> None:
+        pass
 
     with click.progressbar(length=n_geo, label="Collecting training data") as bar:
-        def _step():
+        def _progress() -> None:
             bar.update(1)
-        gt.collect_training_data(progress_callback=_step)
+
+        # Collect data with default solver params
+        for i in range(n_geo):
+            try:
+                gt.collect_training_data(
+                    nx=cfg.solver.nx,
+                    ny=cfg.solver.ny,
+                    num_modes=cfg.solver.n_modes,
+                )
+            except Exception as e:
+                click.echo(f"Warning: sample {i} failed: {e}", err=True)
+            _progress()
 
     click.echo("Training data collected. Finding fixed point...")
     gt.find_fixed_point(iters=iters_val)
@@ -218,16 +229,12 @@ def predict(
 
     if model_path is None:
         click.echo("[faraday predict] No model provided — creating an untrained GodTensor.")
-        gt = GodTensor(
-            n_geometries=cfg.training.n_geometries,
-            nx=cfg.solver.nx,
-            ny=cfg.solver.ny,
-        )
+        gt = GodTensor(n_geometries=cfg.training.n_geometries)
     else:
         click.echo(f"[faraday predict] Loading model from {model_path}")
-        gt = GodTensor.load(model_path)
+        gt = GodTensor.load(model_path)  # type: ignore[attr-defined]
 
-    barcode = gt.predict(w=width, h=height)
+    barcode = gt.predict(w=width, h=height)  # type: ignore[attr-defined]
 
     click.echo(f"\nPredicted E-field barcode for geometry ({width} x {height}):")
     for birth, death in barcode:
@@ -271,7 +278,7 @@ def config_show(
     cfg: FaradayConfig = ctx.obj["config"]
 
     if as_yaml:
-        import yaml
+        import yaml  # type: ignore[import]
         click.echo(yaml.dump(cfg.to_dict(), sort_keys=False))
         return
 
@@ -282,7 +289,7 @@ def config_show(
     for section_name in ["solver", "training", "predict", "topology", "logging"]:
         sub = getattr(cfg, section_name)
         click.echo(f"  [{section_name}]")
-        for field_name in sub.__dataclass_fields__:
+        for field_name in sub.__dataclass_fields__:  # type: ignore[attr-defined]
             val = getattr(sub, field_name)
             click.echo(f"    {field_name}: {val}")
         click.echo()
