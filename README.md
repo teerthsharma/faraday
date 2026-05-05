@@ -2,7 +2,7 @@
 
 **Invented by [Teerth Sharma](https://teerthsharma.vercel.app/) · [github.com/teerthsharma/faraday](https://github.com/teerthsharma/faraday)**
 
-> ⚡ *The universe does not solve Maxwell's equations. It IS the solution. Faraday reverse-engineers that solution directly from geometry.*
+> ⚡ *Faraday learns a reduced-order topological operator on FDFD-derived electromagnetic fingerprints — a Banach-fixed coupling tensor that converges to machine epsilon.*
 
 ```bash
 pip install faraday
@@ -14,12 +14,12 @@ git clone https://github.com/teerthsharma/faraday.git && cd faraday && pip insta
 
 ## What We Achieved
 
-On **May 5, 2026**, Faraday completed a **50,000-epoch Banach fixed-point burn** on a 3D dielectric electromagnetic solver. The convergence is **irrefutable**:
+On **May 5, 2026**, Faraday completed a **50,000-epoch Banach fixed-point burn** on a 3D dielectric electromagnetic solver. The convergence is **verifiable**:
 
 ```
 Epoch 50,000 of 50,000  ████████████████████████████████  100%
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Banach Loss:    1.755e-16   ← machine epsilon (true fixed point)
+  Banach Loss:    1.755e-16   ← machine epsilon (fixed point reached)
   Betti-0 Error: 1.2564      ← stable topological invariant
   Betti-1 Error: 0.0032812   ← loop/hole coupling error (plateaued)
   Betti-2 Error: 1.43e-8    ← essentially zero
@@ -29,11 +29,11 @@ Epoch 50,000 of 50,000  ██████████████████�
   Git push:       committed + pushed to main              ✓
 ```
 
-**The God Tensor reached a true mathematical fixed point.** `1.755×10⁻¹⁶` is IEEE 754 double-precision machine epsilon — `T(T(x)) = T(x) = x` to the limits of floating-point arithmetic. No interpolation. No aggregation. 50,000 raw lines, each capturing one exact moment of the universe learning itself.
+**The God Tensor reached a true mathematical fixed point.** `1.755×10⁻¹⁶` is IEEE 754 double-precision machine epsilon — `T(T(x)) = T(x) = x` to the limits of floating-point arithmetic. No interpolation. No aggregation. 50,000 raw lines, each capturing one exact moment of the Banach iteration converging.
 
 ---
 
-## Why This Matters: Downloading Physics from Geometry
+## Why This Matters: Learned Topological Operators for Electromagnetic Coupling
 
 ### The Old Way
 Classical physics derives laws from experiment, then solves them analytically or numerically:
@@ -45,7 +45,7 @@ Maxwell's equations → FDFD solver → E and H fields
 You already know Maxwell's equations. You just solve them.
 
 ### The Faraday Way
-Faraday never assumes Maxwell's equations. It **discovers the coupling** directly from `(geometry, E, H)` data:
+Faraday learns a reduced-order coupling operator `T` on topological fingerprints of FDFD-derived E/H fields:
 
 ```
 Cavity Geometry  →  FDFD  →  |E| point cloud  →  Persistent Homology
@@ -59,12 +59,12 @@ Cavity Geometry  →  FDFD  →  |E| point cloud  →  Persistent Homology
                                                         ↓
                                         Banach iteration → God Tensor (x*)
                                                         ↓
-                            T(x*) = x*  (the discovered invariant of E/H coupling)
+                            T(x*) = x*  (learned invariant of E/H coupling)
 ```
 
-The **God Tensor** `x*` is the fixed point of the learned operator `T`. At this point, `T(E) = T(H) = x*` — the E-field and H-field representations become indistinguishable because they are, fundamentally, the same physical phenomenon viewed through different degrees of freedom.
+The **God Tensor** `x*` is the fixed point of the learned operator `T`. At convergence, `T(E) = T(H) = x*` — the E-field and H-field barcode embeddings become indistinguishable under the learned coupling, because they share the same topological structure up to the residual error of the operator.
 
-This is the Banach fixed-point theorem applied to electromagnetic topology. Not assumed. **Discovered.**
+This is the Banach fixed-point theorem applied to learned electromagnetic topology. The operator `T` is fit to FDFD-derived barcodes via least squares. Maxwell's curl equations are assumed in the FDFD solver that generates the training data (see `em_solver.py:325–330`).
 
 ---
 
@@ -77,7 +77,7 @@ This is the Banach fixed-point theorem applied to electromagnetic topology. Not 
 | **Betti-1 Error** | `0.00328` | How much the loop/hole signature deviates — the residual topological mismatch |
 | **Betti-2 Error** | `1.43e-8` | Negligible higher-order structure contribution |
 
-The **Betti-1 plateau at 0.00328** is the physics. It means the learned operator `T` couples E and H with 99.67% topological fidelity — the residual is the irreducible uncertainty from finite training data (20 geometries, 4 modes). Adding more diverse geometries would push this lower.
+The **Betti-1 plateau at 0.00328** reflects the residual topological mismatch in the learned operator — the irreducible error from finite training data (20 geometries, 4 modes per geometry). Whether additional training data reduces this is an open empirical question.
 
 ---
 
@@ -105,8 +105,8 @@ Predict E/H for new geometries via KNN + God Tensor
 
 **1. FDFD solver** — `em_solver.py`
 - 5-point finite-difference Laplacian on rectangular PEC cavity
-- `scipy.sparse.linalg.eigsh` returns real eigenvectors (symmetric matrix)
-- TM modes: Ez dominant, H = transverse (Hx, Hy) from curl equations
+- `scipy.sparse.linalg.eigsh(which="SM")` returns eigenvectors sorted by ascending k (fundamental mode first)
+- TM modes: Ez dominant, H = transverse (Hx, Hy) from Maxwell curl equations
 - H stored as magnitude `|H| = sqrt(Hx² + Hy²)`
 
 **2. Persistent Homology** — `barcode.py`
@@ -118,10 +118,15 @@ Predict E/H for new geometries via KNN + God Tensor
 **3. Hilbert Embedding** — `manifold_projector.py`
 - Encode entire barcode as 50D vector via Hilbert series: `N(t) = Σt^birth − Σt^death`
 - Fixed-length representation of topological structure
+- Trained autoencoder: `encode(barcode) → 16D` and `decode(16D) → barcode`
 
 **4. Learn T** — `god_tensor.py`
 ```python
-T_raw, *_ = lstsq(E_latent, H_latent)  # E_latent @ T_raw = H_latent
+projector_e.fit(barcodes_e)   # train autoencoder on E barcodes
+projector_h.fit(barcodes_h)   # train autoencoder on H barcodes
+E_latent = projector_e.encode(barcodes_e)  # 50D → 16D
+H_latent = projector_h.encode(barcodes_h)  # 50D → 16D
+T_raw, *_ = lstsq(E_latent, H_latent)      # E_latent @ T_raw = H_latent
 T = T_raw.T  # → (latent_dim, latent_dim) = (16, 16)
 ```
 
@@ -189,7 +194,7 @@ faraday predict --dims 2.0 1.2
 For the full production run (the **God Tensor burn**):
 
 ```bash
-# 50k demo run (completed May 5 2026 — 134 seconds)
+# 50k demo run (completed May 5 2026)
 python execution_daemon.py --epochs 50000 --dim 3 --n-geometries 20 --nx 30 --ny 30 --num-modes 4 --seed 42 --git-every 10000
 
 # Production: 1M epochs with checkpoint-based resume
@@ -203,10 +208,11 @@ The **execution_daemon.py** runs the Banach iteration as a supervised subprocess
 - **Git Pulse**: every 10k epochs → `git add` → commit with live telemetry → `git push` (all `check=False` — network failures do not crash the daemon)
 - **Checkpointing**: every 10k epochs → `burn_checkpoint.npz` (god_tensor, T_matrix, epoch, RNG state) + `burn_checkpoint_gt.pkl` (full GodTensor pickle)
 - **Resume**: next run auto-detects latest checkpoint, reads `epoch` from `.npz` via `np.load()`, skips ledger entries ≤ checkpoint epoch, resumes from `epoch + 1`
+- **Hash Chain**: each ledger epoch carries `SHA256(epoch‖banach_loss‖betti_0‖betti_1‖betti_2‖timestamp‖prev_hash)`; resume reconstructs chain from `_last_hash`
 
 ```
 runs/
-├── transcript.csv          # 50,000 lines: epoch, banach, betti_0/1/2, timestamp
+├── transcript.csv          # 50,000 lines: epoch, banach, betti_0/1/2, timestamp, hash
 ├── convergence_log.jsonl   # 50,000 JSON lines: full structlog epoch telemetry
 ├── checkpoints/
 │   ├── burn_checkpoint.npz       # god_tensor + T_matrix + epoch + rng_state
@@ -226,7 +232,9 @@ ValidationReport: 40 train / 10 test geometries |
   mean_coupling_error=0.284  convergence_rate=100.0%
 ```
 
-**E/H Betti-0 prediction error is 0.000** — KNN correctly recovers the topological structure of unseen cavity modes. The `god_score` measures how tightly the training set unifies under `T` (higher = better coupling).
+**E/H Betti-0 prediction error is 0.000** — KNN correctly recovers the topological structure of unseen cavity modes on similar rectangular geometries. The `god_score` measures how tightly the training set unifies under `T` (higher = better coupling).
+
+Note: `mean_E_err=0.000` reflects Betti-0 KNN agreement — an integer identity check that is trivially satisfied for similar rectangular geometries. This metric does not indicate general predictive accuracy for arbitrary cavity shapes.
 
 | Suite | n_train | n_test | god_score | E_err | H_err | convergence |
 |-------|---------|--------|-----------|-------|-------|-------------|
@@ -236,7 +244,7 @@ ValidationReport: 40 train / 10 test geometries |
 | small-99 | 16 | 4 | 0.424 | 0.000 | 0.000 | 100% |
 | medium-42 | 40 | 10 | 0.426 | 0.000 | 0.000 | 100% |
 
-*convergence_rate = fraction of held-out geometries where god_distance < 1.0. Low convergence with high n_test reflects heterogeneous geometry distributions — expected behavior.
+*convergence_rate = fraction of held-out geometries where god_distance < 1.0. Low convergence with high n_test reflects heterogeneous geometry distributions.
 
 ---
 
@@ -249,7 +257,7 @@ Maxwell's equations couple E and H through:
 ∇ × H = +∂D/∂t     (Ampère-Maxwell)
 ```
 
-Faraday **discovers** this without assuming it. We measure coupling as **Earth Mover's Distance** between `|E|` and `|S|` (`|S| = |E| × |H|` — Poynting vector magnitude). When EMD ≈ 0 the fields have identical topological structure. When EMD is large, they're decoupled.
+Faraday measures coupling as **Earth Mover's Distance** between `|E|` and `|S|` (`|S| = |E| × |H|` — Poynting vector magnitude). When EMD ≈ 0 the fields have identical topological structure. When EMD is large, they're decoupled.
 
 Real cavity modes: `EMD < 0.10`, `coupling_strength > 0.90`.
 
@@ -259,8 +267,8 @@ Real cavity modes: `EMD < 0.10`, `coupling_strength > 0.90`.
 
 You can — the physics is well-established. Faraday is useful when:
 
-- **The geometry isn't analytically solvable** — irregular shapes, mixed boundary conditions, inhomogeneous media. FDFD gives the field; Faraday extracts the coupling pattern.
-- **You want to discover unexpected coupling patterns** — the learned T matrix reveals which E-field topological features map to which H-field features without assuming the relationship.
+- **The geometry isn't analytically solvable** — irregular shapes, mixed boundary conditions, inhomogeneous media. FDFD gives the field; Faraday learns the topological coupling pattern.
+- **You want a reduced-order coupling model** — the learned T matrix reveals which E-field topological features map to which H-field features, trained on FDFD data.
 - **You need a fixed E/H coupling representation** — the God Tensor is a 16-dimensional vector invariant under the learned coupling. Use it as a semantic anchor, same as NLP models use [CLS] tokens.
 
 ---
@@ -268,17 +276,17 @@ You can — the physics is well-established. Faraday is useful when:
 ## The God Tensor: What It Is and Why It Converged
 
 | "God Tensor" means... | Concrete meaning |
-|----------------------|-----------------|
+|----------------------|-------------------|
 | The unified E×H entity | The 16D vector `x* = T(x*)` invariant under the learned coupling operator |
 | Fixed point `T(T(x)) = T(x)` | The embedding where E→T(E) and H→T(H) produce the same representation |
-| "Discovered from data" | T was learned via `lstsq(E_emb, H_emb)`, not derived from curl equations |
-| "Without assuming Maxwell's equations" | We never imposed `∇×E = -∂B/∂t`. The coupling emerged from the data |
+| "Learned from data" | T was learned via `lstsq(E_emb, H_emb)` on FDFD-derived barcodes |
+| Banach convergence to ε | Power iteration on T's dominant eigenvector — guaranteed by Perron-Frobenius for ρ(T)≈1 |
 
 **Why it converged to 1e-16:**
 
-The training data (20 rectangular cavities with random aspect ratios) produces a T matrix whose **dominant eigenvalue is ≈ 1.0**. The power iteration therefore converges — the eigenvalue spectrum of T has a single dominant component that attracts all initial vectors.
+The training data (20 rectangular cavities with random aspect ratios) produces a T matrix whose **dominant eigenvalue is ≈ 1.0**. The power iteration therefore converges — the eigenvalue spectrum of T has a single dominant component that attracts all initial vectors. This is a direct consequence of Perron-Frobenius theory for positive matrices, not a novel physical result.
 
-The Betti-1 plateau at 0.00328 is **not non-convergence**. It is the **residual topological mismatch** in the training data — the irreducible error from having only 20 geometries. With 100 geometries the residual would be lower.
+The Betti-1 plateau at 0.00328 is the **residual topological mismatch** in the training data. Whether additional training geometries would reduce it is an open empirical question — no scaling experiment has been performed.
 
 ---
 
@@ -309,6 +317,7 @@ faraday/
 ├── execution_daemon.py        # Autonomous Banach burn supervisor
 │                              # LedgerWriter, DivergenceMonitor, GitPulse
 │                              # checkpoint detection, skip_until resume guard
+│                              # SHA-256 hash chain across all ledger epochs
 │
 ├── tests/
 │   ├── test_core.py          # Geometry, solver, barcode, projector (20 tests)
@@ -322,7 +331,7 @@ faraday/
 └── .github/workflows/ci.yml  # lint → typecheck → test → generalization CI
 
 runs/
-├── transcript.csv             # 50,000 epoch lines (append-mode ledger)
+├── transcript.csv             # 50,000 epoch lines (append-mode ledger + hash chain)
 ├── convergence_log.jsonl      # 50,000 JSON structlog lines
 └── checkpoints/
     ├── burn_checkpoint.npz    # god_tensor + T_matrix + epoch + rng_state
@@ -353,7 +362,7 @@ Requires Python ≥ 3.10, numpy ≥ 1.24, scipy ≥ 1.10, ripser ≥ 0.6.
   title = {Computational Faraday Tensor},
   url = {https://github.com/teerthsharma/faraday},
   version = {0.1.0},
-  year = {2026},
+  year = {2026,
 }
 ```
 
@@ -361,6 +370,6 @@ Requires Python ≥ 3.10, numpy ≥ 1.24, scipy ≥ 1.10, ripser ≥ 0.6.
 
 ## Acknowledgements
 
-Built by **Teerth Sharma** (`@teerthsharma`) as the God Tensor project — a computational Faraday tensor that discovers the unified E × H field coupling law directly from geometry data, without assuming Maxwell's equations. First committed to GitHub May 2026.
+Built by **Teerth Sharma** (`@teerthsharma`) as the God Tensor project — a learned topological operator on FDFD-derived electromagnetic barcodes, converging to a Banach fixed point at machine epsilon. First committed to GitHub May 2026.
 
-The Banach fixed-point burn ran on a 3D dielectric electromagnetic solver. All convergence telemetry is stored in `runs/transcript.csv` — an immutable, cryptographically timestamped record of the universe learning itself.
+The Banach fixed-point burn ran on a 3D dielectric electromagnetic solver. All convergence telemetry is stored in `runs/transcript.csv` — an immutable, SHA-256 hash-chained record of the Banach iteration converging across 50,000 epochs.
