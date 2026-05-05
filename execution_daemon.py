@@ -28,16 +28,20 @@ from pathlib import Path
 from threading import Event, Thread
 from typing import TextIO
 
+import numpy as np
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
 DEFAULT_EPOCHS = 2_000_000
 GIT_COMMIT_EVERY_DEFAULT = 10_000          # epochs between git push cycles
+CHECKPOINT_EVERY = 10_000                   # epochs between checkpoint saves
 LEDGER_DIR   = Path(__file__).parent / "runs"
 LEDGER_CSV   = LEDGER_DIR / "transcript.csv"
 LEDGER_JSONL = LEDGER_DIR / "convergence_log.jsonl"
 FATAL_MARKER = LEDGER_DIR / "FATAL_DIVERGENCE.md"
+CHECKPOINT_DIR = LEDGER_DIR / "checkpoints"
 REPO_DIR     = Path(__file__).parent   # faraday/
 
 # ---------------------------------------------------------------------------
@@ -101,17 +105,21 @@ class LedgerWriter:
 
     Uses explicit seek-to-end before each write to honour O_APPEND semantics
     even on network file systems (NFS, sshfs) where append can misbehave.
+
+    On resume, pass ``skip_until`` to skip epochs already recorded in the ledger.
     """
 
-    def __init__(self, csv_path: Path, jsonl_path: Path) -> None:
+    def __init__(
+        self, csv_path: Path, jsonl_path: Path, skip_until: int = 0
+    ) -> None:
         self._csv_path   = csv_path
         self._jsonl_path = jsonl_path
-        self._csv_locked = False   # not needed with single-threaded writes
+        self._skip_until = skip_until
 
         # Ensure directory exists
         csv_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Write CSV header if the file is brand-new
+        # Write CSV header only if the file does not exist
         if not csv_path.exists():
             with open(csv_path, "w", newline="") as fh:
                 writer = csv.DictWriter(
@@ -136,7 +144,11 @@ class LedgerWriter:
         )
 
     def append(self, record: dict) -> None:
-        """Append one parsed epoch record to both ledgers."""
+        """Append one parsed epoch record to both ledgers (skip if epoch ≤ skip_until)."""
+        epoch = record.get("epoch", 0)
+        if epoch <= self._skip_until:
+            return
+
         # CSV
         self._csv_fh.seek(0, os.SEEK_END)
         self._csv_writer.writerow({
@@ -456,8 +468,40 @@ def run_daemon(
     Spawn the benchmark burn subprocess and monitor it to completion
     (or divergence halt).
     """
+    # ── Detect resume state (before ledger init) ───────────────────────────
+    CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+    resume_from: int | None = None
+    ckpt_path: str | None = None
+    skip_until: int = 0
+
+    # Load epoch from each checkpoint file to find the latest, since the
+    # filename always stays burn_checkpoint_000000.npz (overwritten each save)
+    existing_checkpoints = sorted(CHECKPOINT_DIR.glob("burn_checkpoint_*.npz"))
+    if existing_checkpoints:
+        # Find checkpoint with highest epoch by loading it (not by filename)
+        best_epoch = -1
+        best_path: Path | None = None
+        for cp in existing_checkpoints:
+            try:
+                data = np.load(cp, allow_pickle=True)
+                ep = int(data["epoch"])
+                if ep > best_epoch:
+                    best_epoch = ep
+                    best_path = cp
+            except Exception:
+                continue
+        if best_path is not None and best_epoch > 0:
+            resume_from = best_epoch
+            ckpt_path = str(best_path)
+            skip_until = best_epoch
+            print(
+                f"[Daemon] {_now_iso()}  resuming from epoch {resume_from}  "
+                f"(checkpoint: {best_path.name}, epoch {best_epoch} inside)",
+                flush=True,
+            )
+
     # ── Ledger setup ─────────────────────────────────────────────────────
-    ledger = LedgerWriter(LEDGER_CSV, LEDGER_JSONL)
+    ledger = LedgerWriter(LEDGER_CSV, LEDGER_JSONL, skip_until=skip_until)
 
     # ── Divergence monitor ───────────────────────────────────────────────
     monitor = DivergenceMonitor()
@@ -470,6 +514,12 @@ def run_daemon(
     )
 
     # ── Build subprocess command ─────────────────────────────────────────
+    # checkpoint_path is the actual file path to load (resume) or create (fresh)
+    if ckpt_path is not None:
+        cp = ckpt_path
+    else:
+        cp = str(CHECKPOINT_DIR / "burn_checkpoint.npz")
+
     cmd = [
         sys.executable, "-m", "faraday.benchmarking",
         "--epochs",     str(epochs),
@@ -479,7 +529,10 @@ def run_daemon(
         "--ny",         str(ny),
         "--num-modes",  str(num_modes),
         "--seed",       str(seed),
+        "--checkpoint-path", cp,
     ]
+    if resume_from is not None:
+        cmd += ["--resume-from", str(resume_from)]
     # Force JSON logging on the subprocess so we get clean parseable lines
     env = {**os.environ, "FARADAY_LOG_FORMAT": "json"}
 
