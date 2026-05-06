@@ -67,32 +67,63 @@ def field_to_pointcloud(
 
 
 def compute_barcodes(
-    points: np.ndarray, max_dim: int = 1, metric: str = "euclidean"
+    data: np.ndarray, filtration: str = "rips", max_dim: int = 1, metric: str = "euclidean"
 ) -> dict:
     """
-    Compute persistent homology barcodes from field point cloud.
-    Uses ripser for efficient computation.
-
+    Compute persistent homology barcodes.
+    
     Args:
-        points: (N, d) point cloud
-        max_dim: maximum homology dimension to compute (H0, H1, H2...)
-        metric: distance metric ('euclidean' or 'ripser' default)
+        data: (N, d) point cloud if filtration="rips", or (ny, nx) 2D array if filtration="cubical".
+        filtration: 'rips' or 'cubical'.
+        max_dim: maximum homology dimension to compute.
+        metric: distance metric for rips.
 
     Returns:
         dict with betti_0, betti_1, num_h0_bars, num_h1_bars, diagrams
     """
-    try:
-        from ripser import ripser
-    except ImportError:
-        return {"error": "ripser not installed — run: pip install ripser"}
+    diagrams = []
+    
+    if filtration == "rips":
+        try:
+            from ripser import ripser
+        except ImportError:
+            return {"error": "ripser not installed — run: pip install ripser"}
 
-    result = ripser(points, maxdim=max_dim, metric=metric)
-    diagrams = result["dgms"]
+        result = ripser(data, maxdim=max_dim, metric=metric)
+        diagrams = result["dgms"]
+        
+    elif filtration == "cubical":
+        try:
+            import gudhi
+        except ImportError:
+            return {"error": "gudhi not installed — run: pip install gudhi"}
+            
+        # Cubical complex requires a grid. We compute superlevel sets by negating the data.
+        # This highlights the peaks of the EM field.
+        complex = gudhi.CubicalComplex(top_dimensional_cells=-data)
+        complex.compute_persistence()
+        
+        # Extract diagrams for each dimension
+        diagrams = []
+        for dim in range(max_dim + 1):
+            dgm = complex.persistence_intervals_in_dimension(dim)
+            if len(dgm) > 0:
+                # gudhi returns (birth, death). Since we negated the data for superlevel sets,
+                # the true birth/death on the original magnitude landscape are -birth, -death.
+                # However, persistence magnitude |death - birth| is invariant.
+                # We'll just keep the intervals as positive lifetimes.
+                # To match ripser format, we want [[b, d], [b, d]]
+                diagrams.append(np.array(dgm))
+            else:
+                diagrams.append(np.empty((0, 2)))
+    else:
+        return {"error": f"Unknown filtration {filtration}"}
 
     betti = []
     for _d, dgm in enumerate(diagrams):
         if len(dgm) > 0:
             lifetimes = dgm[:, 1] - dgm[:, 0]
+            # Handle infinities (for cubical, gudhi uses inf)
             lifetimes = lifetimes[np.isfinite(lifetimes)]
             if len(lifetimes) > 0:
                 # Persistent features: bars significantly longer than median gap
@@ -113,7 +144,7 @@ def compute_barcodes(
         "num_h1_bars": len(diagrams[1]) if len(diagrams) > 1 else 0,
         "h0_lifetimes": [
             float(x) for x in (diagrams[0][:, 1] - diagrams[0][:, 0]) if not np.isinf(x)
-        ],
+        ] if len(diagrams) > 0 else [],
         "h1_lifetimes": [
             float(x) for x in (diagrams[1][:, 1] - diagrams[1][:, 0]) if not np.isinf(x)
         ]

@@ -112,6 +112,8 @@ def predict_eh_barcode(
         "god_distance_e": god_dist_e,
         "god_distance_h": god_dist_h,
         "coupling_score": gt.god_score(),
+        "inferred_e_latent": gt.projector_e.encode(e_interp).tolist(),
+        "inferred_h_latent": gt.projector_h.encode(h_interp).tolist(),
         # Comparison
         "e_betti0_knn_vs_gt_diff": abs(knn_e_fp["betti_0"] - gt_e_fp["betti_0"]),
         "h_betti0_knn_vs_gt_diff": abs(knn_h_fp["betti_0"] - gt_h_fp["betti_0"]),
