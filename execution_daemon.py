@@ -564,6 +564,15 @@ def run_daemon(
         ]
         if resume_from is not None:
             cmd += ["--resume-from", str(resume_from)]
+    elif mode == "massive":
+        cmd = [
+            sys.executable, "massive_benchmark.py",
+            "--nx", str(nx),
+            "--ny", str(ny),
+            "--geometries", str(n_geometries),
+            "--epochs", str(epochs),
+            "--checkpoint", cp,
+        ]
     else:
         # FDTD Mode
         cmd = [
@@ -780,8 +789,8 @@ def main() -> None:
         help="Git commit interval in epochs (default: 10000)",
     )
     p.add_argument(
-        "--mode", type=str, default="train", choices=["train", "fdtd"],
-        help="Execution mode: train the God Tensor or run Topological FDTD.",
+        "--mode", type=str, default="train", choices=["train", "fdtd", "massive"],
+        help="Execution mode: train the God Tensor, run Topological FDTD, or run Massive Benchmark.",
     )
     p.add_argument(
         "--dt", type=float, default=0.01,
