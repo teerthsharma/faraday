@@ -13,7 +13,7 @@ jobs:
     # Environment needed for Trusted Publishing
     environment:
       name: pypi
-      url: https://pypi.org/p/faraday
+      url: https://pypi.org/p/faradayFDTD
       
     permissions:
       id-token: write  # IMPORTANT: mandatory for trusted publishing
