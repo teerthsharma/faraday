@@ -108,11 +108,6 @@ def compute_barcodes(
         for dim in range(max_dim + 1):
             dgm = complex.persistence_intervals_in_dimension(dim)
             if len(dgm) > 0:
-                # gudhi returns (birth, death). Since we negated the data for superlevel sets,
-                # the true birth/death on the original magnitude landscape are -birth, -death.
-                # However, persistence magnitude |death - birth| is invariant.
-                # We'll just keep the intervals as positive lifetimes.
-                # To match ripser format, we want [[b, d], [b, d]]
                 diagrams.append(np.array(dgm))
             else:
                 diagrams.append(np.empty((0, 2)))
@@ -154,23 +149,29 @@ def compute_barcodes(
     }
 
 
-def topological_fingerprint(field: np.ndarray, threshold: float = 0.1) -> dict:
+def topological_fingerprint(
+    field: np.ndarray, threshold: float = 0.1, filtration: str = "cubical"
+) -> dict:
     """
     Full topological analysis of an EM field distribution.
     Returns Betti numbers, barcode statistics, and field metrics.
 
     Args:
         field: 2D complex field array
-        threshold: fraction of max for point cloud extraction
+        threshold: fraction of max for point cloud extraction (used only for rips)
+        filtration: 'rips' or 'cubical'
 
     Returns:
         dict with betti_0, betti_1, h0/h1 bars, field statistics, topological score
     """
-    points = field_to_pointcloud(field, threshold)
-    if len(points) < 10:
-        return {"error": "Too few points for topological analysis"}
+    if filtration == "cubical":
+        barcodes = compute_barcodes(np.abs(field), filtration="cubical")
+    else:
+        points = field_to_pointcloud(field, threshold)
+        if len(points) < 10:
+            return {"error": "Too few points for topological analysis"}
+        barcodes = compute_barcodes(points, filtration="rips")
 
-    barcodes = compute_barcodes(points)
     mag = np.abs(field)
 
     total_energy = float(np.sum(mag**2))
@@ -189,7 +190,6 @@ def topological_fingerprint(field: np.ndarray, threshold: float = 0.1) -> dict:
         "field_std": float(mag.std()),
         "confinement_ratio": confinement_ratio,
         "num_grid_points": int(np.sum(mag > threshold * mag.max())),
-        # Topological score: more holes with longer lifetimes = higher score
         "topological_score": float(
             barcodes.get("betti_1", 0) * np.mean(barcodes.get("h1_lifetimes", [0]))
             + barcodes.get("betti_0", 0) * np.mean(barcodes.get("h0_lifetimes", [0]))
@@ -199,72 +199,39 @@ def topological_fingerprint(field: np.ndarray, threshold: float = 0.1) -> dict:
 
 
 def coupled_fingerprint(
-    e_field: np.ndarray, h_field: np.ndarray, threshold: float = 0.1
+    e_field: np.ndarray, h_field: np.ndarray, threshold: float = 0.1, filtration: str = "cubical"
 ) -> dict:
     """
     Compute coupled topological fingerprints for E and H fields together.
 
     Uses the Poynting vector approach: E field and |S| = |E| times |H| energy flux
-    are the two scalar fields for topological comparison. Their barcode
-    structures should be nearly identical in a well-coupled cavity mode
-    (same nodes, same antinodes, same energy distribution).
+    are the two scalar fields for topological comparison.
 
     Returns both individual fingerprints PLUS the cross-field coupling metrics:
-      - emd_S: Earth Mover's Distance between |E| and |S| point clouds
+      - emd_S: Earth Mover's Distance between |E| and |H| point clouds
               (0 = identical topology, higher = more decoupling)
-      - confinement: fraction of energy in the dominant topological component
       - coupling_strength: 1 / (1 + emd_S) -- bounded [0, 1]
     """
-    # |E| point cloud
-    e_fp = topological_fingerprint(e_field, threshold)
-    # |H| — stored as magnitude; reconstruct |S| = |E| | |H| if h_field is |H|
-    # In the current convention, h_field IS |S| (energy flux magnitude)
-    # because em_solver now returns |H| in h_modes["field"] and computes |S| separately.
-    # For backward compatibility, detect whether h_field looks like |S| or |H|
-    # by checking if it's a magnitude-like (non-negative) field.
-    h_fp = topological_fingerprint(h_field, threshold)
+    e_fp = topological_fingerprint(e_field, threshold, filtration=filtration)
+    h_fp = topological_fingerprint(h_field, threshold, filtration=filtration)
 
-    e_mag = np.abs(e_field)
-    h_mag = np.abs(h_field)
+    e_pts = field_to_pointcloud(e_field, threshold, add_phase=False)
+    h_pts = field_to_pointcloud(h_field, threshold, add_phase=False)
 
-    # Earth Mover's Distance between |E| and |S| point clouds
-    # Sample points from both fields at same grid positions
-    e_pts = field_to_pointcloud(e_field, threshold, add_phase=False)  # (x, y, |E|)
-    h_pts = field_to_pointcloud(h_field, threshold, add_phase=False)  # (x, y, |H|)
-
+    emd_S = 1.0
     if len(e_pts) >= 5 and len(h_pts) >= 5:
         try:
-            from scipy.stats import wasserstein_distance_nd
+            from scipy.stats import wasserstein_distance
+            # Use simplified 1D wasserstein on magnitudes for performance
+            emd_S = float(wasserstein_distance(e_pts[:, 2], h_pts[:, 2]))
+        except ImportError:
+            pass
 
-            # EMD between |E| and |H| distributions (project to 1D for simplicity)
-            e_flat = e_pts[:, 2]  # |E| values
-            h_flat = h_pts[:, 2]  # |H| values
-            # Sort for 1D EMD
-            e_sorted = np.sort(e_flat)
-            h_sorted = np.sort(h_flat)
-            emd_S = float(wasserstein_distance_nd(e_sorted, h_sorted))
-        except Exception:
-            # Fallback: normalized L2 between mean field distributions
-            e_hist = np.histogram(e_mag[e_mag > 0], bins=20, density=True)[0]
-            h_hist = np.histogram(h_mag[h_mag > 0], bins=20, density=True)[0]
-            emd_S = float(np.linalg.norm(e_hist - h_hist))
-    else:
-        emd_S = 0.0
-
-    # Coupling strength: 1 when |E| and |S| have identical topology
-    coupling_strength = float(1.0 / (1.0 + emd_S))
-
-    # Confinement alignment: how much of |S| lives in high-|E| regions
-    both = (e_mag > threshold * e_mag.max()) & (h_mag > threshold * h_mag.max())
-    if np.sum(both) > 0:
-        confinement_alignment = float(np.sum(both) / e_mag.size)
-    else:
-        confinement_alignment = 0.0
-
+    coupling_strength = 1.0 / (1.0 + emd_S)
+    
     return {
         "e_fingerprint": e_fp,
         "h_fingerprint": h_fp,
         "emd_S": emd_S,
-        "confinement_alignment": confinement_alignment,
         "coupling_strength": coupling_strength,
     }

@@ -125,16 +125,22 @@ class GodTensor:
         self.samples = []
 
         for i in range(self.n_geometries):
-            # Random geometry: 70% rectangular, 30% circular
-            if rng.random() < 0.7:
+            # Random geometry: 60% rectangular, 20% circular, 20% photonic crystal
+            p = rng.random()
+            if p < 0.6:
                 w = rng.uniform(0.8, 3.0)
                 h = rng.uniform(0.5, 2.0)
                 geom = CavityGeometry(shape=CavityShape.RECTANGULAR, dims=(w, h))
                 params = (w, h)
-            else:
+            elif p < 0.8:
                 r = rng.uniform(0.5, 1.5)
                 geom = CavityGeometry(shape=CavityShape.CIRCULAR, dims=(r,))
                 params = (r,)
+            else:
+                a = rng.uniform(0.1, 0.3)
+                r_p = a * 0.3
+                geom = CavityGeometry(shape=CavityShape.PHOTONIC_CRYSTAL, dims=(a, r_p))
+                params = (a, r_p)
 
             # Solve cavity modes
             try:

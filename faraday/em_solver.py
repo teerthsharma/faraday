@@ -31,6 +31,7 @@ log = get_logger(__name__)
 class CavityShape(Enum):
     RECTANGULAR = "rectangular"
     CIRCULAR = "circular"
+    PHOTONIC_CRYSTAL = "photonic_crystal"
 
 
 @dataclass
@@ -40,9 +41,10 @@ class CavityGeometry:
     Attributes
     ----------
     shape : CavityShape
-        The shape of the cavity (rectangular or circular).
+        The shape of the cavity (rectangular, circular, or photonic_crystal).
     dims : tuple[float, ...]
-        Dimensions: ``(width, height)`` for rectangular, ``(radius,)`` for circular.
+        Dimensions: ``(width, height)`` for rectangular, ``(radius,)`` for circular,
+        or ``(a, r_pillar)`` for photonic_crystal (a=lattice constant).
     boundary_conditions : str
         Boundary condition type. Only ``"pec"`` (perfect electric conductor) is
         currently supported.
@@ -73,6 +75,32 @@ class CavityGeometry:
         elif self.shape == CavityShape.CIRCULAR:
             (r,) = self.dims
             return (x**2 + y**2) < r**2
+        elif self.shape == CavityShape.PHOTONIC_CRYSTAL:
+            # dims = (lattice_a, pillar_radius)
+            a, r_p = self.dims
+            # Outer boundary (box)
+            w, h = a * 15, a * 10
+            interior = (np.abs(x) < w / 2) & (np.abs(y) < h / 2)
+            
+            # Pillar lattice (Hexagonal)
+            # Find all (i, j) within bounds
+            pillars_mask = np.zeros_like(x, dtype=bool)
+            for i in range(-10, 11):
+                for j in range(-8, 9):
+                    # Hexagonal coordinates
+                    px = i * a + (j % 2) * (a / 2)
+                    py = j * a * (np.sqrt(3) / 2)
+                    
+                    # L3 Defect: skip the 3 central pillars on the j=0 row
+                    if j == 0 and i in [-1, 0, 1]:
+                        continue
+                        
+                    dist_sq = (x - px)**2 + (y - py)**2
+                    pillars_mask |= (dist_sq < r_p**2)
+            
+            # Interior is the space NOT occupied by pillars
+            return interior & (~pillars_mask)
+            
         msg = f"Unsupported cavity shape: {self.shape}"
         raise NotImplementedError(msg)
 
@@ -260,6 +288,13 @@ def solve_cavity_modes(
         X, Y, interior = make_circular_grid(r, nx)
         dx = 2 * r / (nx - 1)
         dy = 2 * r / (nx - 1)
+    elif geometry.shape == CavityShape.PHOTONIC_CRYSTAL:
+        a, r_p = geometry.dims
+        w, h = a * 15, a * 10
+        X, Y = make_rectangular_grid(w, h, nx, ny)
+        dx = w / (nx - 1)
+        dy = h / (ny - 1)
+        interior = geometry.contains(X, Y)
     else:
         msg = f"Unsupported shape: {geometry.shape}"
         raise NotImplementedError(msg)
