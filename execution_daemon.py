@@ -448,9 +448,9 @@ def parse_epoch_line(line: str) -> dict | None:
         return None
 
     # Accept any event name that carries epoch telemetry
-    # (the burn loop emits event="burn_epoch")
+    # (the burn loop emits event="burn_epoch", FDTD emits "fdtd_step")
     event = obj.get("event", "")
-    if event not in ("burn_epoch", "epoch", "fixed_point_progress"):
+    if event not in ("burn_epoch", "epoch", "fixed_point_progress", "fdtd_step"):
         return None
 
     epoch = obj.get("epoch")
@@ -487,6 +487,8 @@ def run_daemon(
     num_modes: int = 8,
     seed: int = 42,
     git_every: int = GIT_COMMIT_EVERY_DEFAULT,
+    mode: str = "train",
+    dt: float = 0.01,
 ) -> None:
     """
     Spawn the benchmark burn subprocess and monitor it to completion
@@ -525,15 +527,19 @@ def run_daemon(
             )
 
     # ── Ledger setup ─────────────────────────────────────────────────────
-    ledger = LedgerWriter(LEDGER_CSV, LEDGER_JSONL, skip_until=skip_until)
+    csv_file = LEDGER_CSV if mode == "train" else LEDGER_DIR / "fdtd_transcript.csv"
+    jsonl_file = LEDGER_JSONL if mode == "train" else LEDGER_DIR / "fdtd_log.jsonl"
+    ledger = LedgerWriter(csv_file, jsonl_file, skip_until=skip_until)
 
     # ── Divergence monitor ───────────────────────────────────────────────
-    monitor = DivergenceMonitor()
+    # For FDTD, divergence is defined as norm (banach_loss mapped) > 10.0
+    spike_thresh = SPIKE_THRESHOLD if mode == "train" else 10.0
+    monitor = DivergenceMonitor(spike_threshold=spike_thresh)
 
     # ── Git pulse ────────────────────────────────────────────────────────
     pulse = GitPulse(
         repo_dir     = REPO_DIR,
-        paths        = [LEDGER_CSV, LEDGER_JSONL],
+        paths        = [csv_file, jsonl_file],
         commit_every = git_every,
     )
 
@@ -544,19 +550,28 @@ def run_daemon(
     else:
         cp = str(CHECKPOINT_DIR / "burn_checkpoint.npz")
 
-    cmd = [
-        sys.executable, "-m", "faraday.benchmarking",
-        "--epochs",     str(epochs),
-        "--dim",        str(dim),
-        "--n-geometries", str(n_geometries),
-        "--nx",         str(nx),
-        "--ny",         str(ny),
-        "--num-modes",  str(num_modes),
-        "--seed",       str(seed),
-        "--checkpoint-path", cp,
-    ]
-    if resume_from is not None:
-        cmd += ["--resume-from", str(resume_from)]
+    if mode == "train":
+        cmd = [
+            sys.executable, "-m", "faraday.benchmarking",
+            "--epochs",     str(epochs),
+            "--dim",        str(dim),
+            "--n-geometries", str(n_geometries),
+            "--nx",         str(nx),
+            "--ny",         str(ny),
+            "--num-modes",  str(num_modes),
+            "--seed",       str(seed),
+            "--checkpoint-path", cp,
+        ]
+        if resume_from is not None:
+            cmd += ["--resume-from", str(resume_from)]
+    else:
+        # FDTD Mode
+        cmd = [
+            sys.executable, "-m", "faraday.fdtd_runner",
+            "--steps", str(epochs),
+            "--dt", str(dt),
+            "--checkpoint-path", cp,
+        ]
     # Force JSON logging on the subprocess so we get clean parseable lines
     env = {**os.environ, "FARADAY_LOG_FORMAT": "json"}
 
@@ -764,6 +779,14 @@ def main() -> None:
         dest="git_every",
         help="Git commit interval in epochs (default: 10000)",
     )
+    p.add_argument(
+        "--mode", type=str, default="train", choices=["train", "fdtd"],
+        help="Execution mode: train the God Tensor or run Topological FDTD.",
+    )
+    p.add_argument(
+        "--dt", type=float, default=0.01,
+        help="Time step size for FDTD mode.",
+    )
     args = p.parse_args()
 
     def _sigint_handler(sig, frame):
@@ -780,6 +803,8 @@ def main() -> None:
         num_modes    = args.num_modes,
         seed         = args.seed,
         git_every    = args.git_every,
+        mode         = args.mode,
+        dt           = args.dt,
     )
 
 
