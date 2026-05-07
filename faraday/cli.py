@@ -242,9 +242,52 @@ def predict(
         click.echo(f"  birth={birth:.4f}, death={death:.4f}, persistence={persistence:.4f}")
 
 
-# ----------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Demo
+# ---------------------------------------------------------------------------
+
+
+@main.command("demo")
+@click.option("-w", "--width", type=float, default=2.0, help="Cavity width.")
+@click.option("-h", "--height", type=float, default=1.0, help="Cavity height.")
+@click.option("--n-geometries", type=int, default=10, help="Number of training geometries.")
+@click.pass_context
+def demo(ctx: click.Context, width: float, height: float, n_geometries: int) -> None:
+    """Run the full Faraday demo: collect training data, learn T, find the God Tensor.
+
+    Example
+    -------
+    $ faraday demo --width 2.5 --height 1.2 --n-geometries 20
+    """
+    import numpy as np
+    from faraday import GodTensor, CavityGeometry, CavityShape, solve_cavity_modes
+
+    click.echo(f"[faraday demo] Generating {n_geometries} training geometries...")
+    geometries = []
+    for i in range(n_geometries):
+        w = np.random.uniform(1.5, 3.0)
+        h = np.random.uniform(0.8, 1.5)
+        geometries.append(CavityGeometry(width=w, height=h, shape=CavityShape.RIGHT_TE101))
+
+    click.echo("[2/4] Solving cavity modes...")
+    fingerprints = [solve_cavity_modes(g) for g in geometries]
+
+    click.echo("[3/4] Training God Tensor...")
+    gt = GodTensor(n_geometries=len(geometries))
+    for geom, fp in zip(geometries, fingerprints):
+        gt.add_training_pair(geom, fp)
+
+    click.echo(f"[4/4] Predicting for geometry ({width} x {height})...")
+    barcode = gt.predict(width=width, height=height)
+
+    click.echo(f"\nPredicted E-field barcode for geometry ({width} x {height}):")
+    for birth, death in barcode:
+        click.echo(f"  birth={birth:.4f}, death={death:.4f}, persistence={death-birth:.4f}")
+
+
+# ---------------------------------------------------------------------------
 # config-show
-# ----------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 
 @main.command("config-show")
