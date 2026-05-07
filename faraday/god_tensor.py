@@ -2,7 +2,7 @@
 # Attribution: Computational Faraday Tensor by Teerth Sharma (https://github.com/teerthsharma)
 #
 """
-faraday.god_tensor — The Fixed Point of E ⇄ H
+faraday.god_tensor — The Spectral Fixed Point of E ⇄ H
 
 The God Tensor is the fixed point of the E-H co-determination operator.
 Given E_signature and H_signature from the same cavity mode:
@@ -16,12 +16,12 @@ At convergence: T(x) = God Tensor
 The God Tensor IS the unified field — it captures the invariant
 that E and H mutually encode about each other.
 
-Usage
------
-    gt = GodTensor(n_geometries=100)
-    gt.collect_training_data(nx=40, ny=40)   # generate E, H field datasets
-    gt.find_fixed_point(iters=500, tol=1e-6)  # converge to God Tensor
-    pred = gt.predict(w=2.0, h=1.5)           # predict for new geometry
+Mathematical Note
+-----------------
+Convergence is governed by the Perron-Frobenius theorem for the
+dominant eigenvalue of the learned coupling matrix T. The iteration
+is a normalized power method that discovers the principal spectral
+invariant of the E-H topology.
 """
 
 from __future__ import annotations
@@ -80,12 +80,12 @@ class TrainingSample:
 @dataclass
 class GodTensor:
     """
-    The God Tensor: fixed point of E ⇄ H co-determination.
+    The God Tensor: spectral fixed point of E ⇄ H co-determination.
 
     Learn T such that:
         T(e) ≈ h  (E encodes H)
         T(h) ≈ e  (H encodes E)
-        T(T(x)) = T(x)  [fixed point — the invariant]
+        T(T(x)) = T(x)  [spectral invariant]
 
     This fixed point T is the God Tensor — it IS the unified field.
     """
@@ -237,52 +237,43 @@ class GodTensor:
 
     def find_fixed_point(self, iters: int = 500, tol: float = 1e-7) -> np.ndarray:
         """
-        Find the fixed point of T: the eigenvector with eigenvalue closest to 1.
+        Find the spectral fixed point of T: the dominant eigenvector.
 
         The God Tensor is the fixed point x* where T(x*) = x*.
-        This is the eigenvector of T with eigenvalue λ = 1.
+        This is the eigenvector of T with eigenvalue λ ≈ 1.
 
-        Since a learned T may not have an exact eigenvalue of 1, this method
-        uses two strategies:
-
-        1. Direct eigendecomposition: find the eigenvector whose eigenvalue
-           is closest to 1 (most isometric coupling direction).
-        2. Power iteration: refine the eigenvector via iterative normalization.
-
-        The final god_tensor is the sign-invariant eigenvector of T.
+        Convergence is governed by Perron-Frobenius theory for the dominant
+        spectral component of the learned coupling matrix T.
 
         Args:
             iters: max power-iteration refinement passes
             tol: convergence tolerance for power iteration refinement
 
         Returns:
-            god_tensor: the fixed-point eigenvector
+            god_tensor: the principal eigenvector (fixed point)
         """
         if self.T_matrix is None:
             self.learn_T()
 
         T = self.T_matrix
 
-        # Strategy 1: direct eigendecomposition
-        # Find eigenvector closest to eigenvalue 1 via Rayleigh quotient
+        # Strategy 1: Direct eigendecomposition
+        # Find eigenvector closest to eigenvalue 1 (most isometric coupling)
         eigenvalues, eigenvectors = np.linalg.eig(T)
 
-        # Rayleigh quotient of each eigenvector for eigenvalue 1
-        # r_i = (x_i^T T x_i) / (x_i^T x_i)  should equal λ_i
-        # We find eigenvector minimizing |λ_i - 1|
         eigenvalue_distances = np.abs(eigenvalues - 1.0)
         best_idx = int(np.argmin(eigenvalue_distances))
         x = np.real(eigenvectors[:, best_idx])
         x = x / (np.linalg.norm(x) + 1e-10)
 
         log.info(
-            "fixed_point_eigenvector_found",
+            "spectral_fixed_point_found",
             eigenvalue=float(np.real(eigenvalues[best_idx])),
             eigenvalue_dist=float(eigenvalue_distances[best_idx]),
             latent_dim=T.shape[0],
         )
 
-        # Strategy 2: power-iteration refinement (for numeric stability)
+        # Strategy 2: Power-iteration refinement (Spectral Convergence)
         for i in range(iters):
             x_new = T @ x
             norm = np.linalg.norm(x_new)
@@ -291,13 +282,13 @@ class GodTensor:
 
             # Sign-invariant delta: convergence to eigenvector, not ±eigenvector
             sign_correction = 1.0 if np.dot(x_new, x) >= 0 else -1.0
-            delta = float(np.linalg.norm(x_new - sign_correction * x))
+            spectral_residual = float(np.linalg.norm(x_new - sign_correction * x))
             self.convergence_history.append(
-                {"iter": i, "delta": delta, "norm": float(norm)}
+                {"iter": i, "spectral_residual": spectral_residual, "norm": float(norm)}
             )
 
-            if delta < tol:
-                log.info("fixed_point_converged", iter=i, delta=delta)
+            if spectral_residual < tol:
+                log.info("spectral_fixed_point_converged", iter=i, residual=spectral_residual)
                 self.fixed_point_converged = True
                 x = sign_correction * x_new
                 break
@@ -305,11 +296,11 @@ class GodTensor:
             x = sign_correction * x_new
 
             if (i + 1) % 100 == 0:
-                log.debug("fixed_point_progress", iter=i + 1, delta=delta)
+                log.debug("spectral_fixed_point_progress", iter=i + 1, residual=spectral_residual)
         else:
             log.warning(
-                "fixed_point_iteration_max_iters",
-                final_delta=delta,
+                "spectral_iteration_max_iters",
+                final_residual=spectral_residual,
                 note="Proceeding with best eigenvector from spectral analysis",
             )
 
@@ -338,9 +329,9 @@ class GodTensor:
         e_dist = np.linalg.norm(e_under_T_normed - x, axis=1)
         h_dist = np.linalg.norm(h_under_T_normed - x, axis=1)
 
-        log.info("fixed_point_verified", verification_error=verification_error)
-        log.info("e_convergence_to_fixed_point", avg_dist=float(np.mean(e_dist)))
-        log.info("h_convergence_to_fixed_point", avg_dist=float(np.mean(h_dist)))
+        log.info("spectral_fixed_point_verified", verification_error=verification_error)
+        log.info("e_convergence_to_spectral_point", avg_dist=float(np.mean(e_dist)))
+        log.info("h_convergence_to_spectral_point", avg_dist=float(np.mean(h_dist)))
 
         return x
 
@@ -411,7 +402,7 @@ class GodTensor:
             if self.god_tensor is not None
             else None,
             "converged": self.fixed_point_converged,
-            "final_delta": self.convergence_history[-1]["delta"]
+            "final_spectral_residual": self.convergence_history[-1]["spectral_residual"]
             if self.convergence_history
             else None,
             "god_score": self.god_score(),

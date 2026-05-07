@@ -52,14 +52,14 @@ class TestGodTensor:
         # OR god_tensor was found via spectral analysis (eigenvector closest to λ=1)
         assert len(gt.convergence_history) > 0
         # Either converged via iteration, or spectral init was used
-        final_delta = gt.convergence_history[-1]["delta"]
+        final_residual = gt.convergence_history[-1]["spectral_residual"]
         final_eig_dist = abs(
-            float(np.linalg.eigvals(gt.T_matrix)[
+            float(np.real(np.linalg.eigvals(gt.T_matrix)[
                 np.argmin(np.abs(np.linalg.eigvals(gt.T_matrix) - 1.0))
-            ]) - 1.0
+            ])) - 1.0
         ) if gt.T_matrix is not None else 1.0
-        assert final_delta < 0.5 or final_eig_dist < 0.5, (
-            f"fixed point delta={final_delta:.4f} and eigenvalue_dist={final_eig_dist:.4f}. "
+        assert final_residual < 0.5 or final_eig_dist < 0.5, (
+            f"fixed point residual={final_residual:.4f} and eigenvalue_dist={final_eig_dist:.4f}. "
             "Neither iteration nor spectral init produced a usable eigenvector."
         )
 

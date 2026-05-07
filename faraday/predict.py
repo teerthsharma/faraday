@@ -26,6 +26,32 @@ from faraday.logging import get_logger
 log = get_logger(__name__)
 
 
+def predict_h_from_e_baseline(
+    gt: GodTensor,
+    e_embedding: np.ndarray,
+    k: int = 1,
+) -> dict:
+    """
+    BASELINE: Predict H-field barcode from E-field barcode using raw KNN.
+    Finds the k nearest E-embeddings in the training set and returns the
+    average of their corresponding H-fingerprints.
+
+    This bypasses the manifold projector and the T-matrix.
+    """
+    distances = []
+    for sample in gt.samples:
+        dist = float(np.linalg.norm(e_embedding - sample.e_embedding))
+        distances.append((dist, sample))
+
+    distances.sort(key=lambda x: x[0])
+    top_k = distances[:k]
+
+    # Simple average (k=1 is most 'raw')
+    h_fingerprints = [s.h_fingerprint for _, s in top_k]
+    weights = [1.0] * len(top_k)
+    return _average_fingerprints(h_fingerprints, weights, float(len(top_k)))
+
+
 def predict_eh_barcode(
     gt: GodTensor,
     geometry_params: tuple[float, ...],
@@ -38,11 +64,12 @@ def predict_eh_barcode(
     (or the reverse). Instead of running FDFD, we interpolate on the
     learned manifold using K-nearest-geometries on the training set.
 
-    The prediction has THREE components:
+    The prediction has FOUR components:
     1. KNN fingerprint: weighted average of actual fingerprints from
-       the k most similar training geometries (ground truth baseline)
+       the k most similar training geometries (geometry-space baseline)
     2. God Tensor projection: E embedding -> T(E) -> predicted H embedding
     3. Coupled prediction: both E and H flow through T to verify convergence
+    4. Raw Barcode Baseline: E_embedding -> nearest E_train -> H_train (barcode-space baseline)
 
     Args:
         gt: trained GodTensor
@@ -52,7 +79,7 @@ def predict_eh_barcode(
     Returns:
         dict with knn_e_fingerprint, knn_h_fingerprint,
         god_tensor_projected_e, god_tensor_projected_h,
-        god_distances, coupling_score
+        god_distances, coupling_score, baseline_h_fingerprint
     """
     params = np.array(geometry_params)
 
@@ -70,11 +97,9 @@ def predict_eh_barcode(
     total_weight = sum(sim for sim, _ in top_k)
 
     # KNN fingerprint: weighted average of ACTUAL training fingerprints
-    # (not invented from embedding coordinates)
     e_fingerprints = [s.e_fingerprint for _, s in top_k]
     h_fingerprints = [s.h_fingerprint for _, s in top_k]
 
-    # Weighted average of scalar fields for the KNN prediction
     knn_e_fp = _average_fingerprints(
         e_fingerprints, [sim for sim, _ in top_k], total_weight
     )
@@ -85,38 +110,40 @@ def predict_eh_barcode(
     # ── God Tensor projection ──────────────────────────────────────
     e_interp = sum(sim / total_weight * s.e_embedding for sim, s in top_k)
     h_interp = sum(sim / total_weight * s.h_embedding for sim, s in top_k)
-    e_interp = e_interp / (np.linalg.norm(e_interp) + 1e-10)
-    h_interp = h_interp / (np.linalg.norm(h_interp) + 1e-10)
+    e_interp_norm = e_interp / (np.linalg.norm(e_interp) + 1e-10)
+    h_interp_norm = h_interp / (np.linalg.norm(h_interp) + 1e-10)
 
     # Project through T
-    e_via_gt = gt.get_e_to_h_map(e_interp)  # E -> T(E) = predicted H
-    h_via_gt = gt.get_h_to_e_map(h_interp)  # H -> T(H) = predicted E
+    e_via_gt = gt.get_e_to_h_map(e_interp_norm)  # E -> T(E) = predicted H
+    h_via_gt = gt.get_h_to_e_map(h_interp_norm)  # H -> T(H) = predicted E
 
     # Distance from God Tensor
     god_dist_e = float(np.linalg.norm(e_via_gt - gt.god_tensor))
     god_dist_h = float(np.linalg.norm(h_via_gt - gt.god_tensor))
 
-    # God Tensor projected fingerprints (for comparison with KNN)
+    # God Tensor projected fingerprints
     gt_e_fp = _embed_to_fingerprint(h_via_gt, source="e_via_gt")
     gt_h_fp = _embed_to_fingerprint(e_via_gt, source="h_via_gt")
+
+    # ── Raw Barcode Baseline ──────────────────────────────────────
+    baseline_h_fp = predict_h_from_e_baseline(gt, e_interp_norm, k=1)
 
     return {
         "geometry_params": geometry_params,
         "shape": shape,
-        # KNN predictions (actual fingerprints from similar geometries)
         "knn_e_fingerprint": knn_e_fp,
         "knn_h_fingerprint": knn_h_fp,
-        # God Tensor projections
-        "god_tensor_projected_e": gt_e_fp,  # H <- T(E) — predicted H
-        "god_tensor_projected_h": gt_h_fp,  # E <- T(H) — predicted E
+        "baseline_h_fingerprint": baseline_h_fp,
+        "god_tensor_projected_e": gt_e_fp,
+        "god_tensor_projected_h": gt_h_fp,
         "god_distance_e": god_dist_e,
         "god_distance_h": god_dist_h,
         "coupling_score": gt.god_score(),
-        "inferred_e_latent": gt.projector_e.encode(e_interp).tolist(),
-        "inferred_h_latent": gt.projector_h.encode(h_interp).tolist(),
-        # Comparison
+        "inferred_e_latent": gt.projector_e.encode(e_interp_norm).tolist(),
+        "inferred_h_latent": gt.projector_h.encode(h_interp_norm).tolist(),
         "e_betti0_knn_vs_gt_diff": abs(knn_e_fp["betti_0"] - gt_e_fp["betti_0"]),
         "h_betti0_knn_vs_gt_diff": abs(knn_h_fp["betti_0"] - gt_h_fp["betti_0"]),
+        "h_betti0_baseline_vs_gt_diff": abs(baseline_h_fp["betti_0"] - gt_h_fp["betti_0"]),
     }
 
 
@@ -249,6 +276,9 @@ def benchmark(
         h_error = abs(
             actual["h_fingerprint"]["betti_0"] - pred["knn_h_fingerprint"]["betti_0"]
         )
+        baseline_h_error = abs(
+            actual["h_fingerprint"]["betti_0"] - pred["baseline_h_fingerprint"]["betti_0"]
+        )
         coupling_error = abs(actual["coupling_strength"] - pred["coupling_score"])
 
         results.append(
@@ -259,6 +289,7 @@ def benchmark(
                 "e_betti0_predicted": pred["knn_e_fingerprint"]["betti_0"],
                 "e_error": e_error,
                 "h_error": h_error,
+                "baseline_h_error": baseline_h_error,
                 "coupling_error": coupling_error,
                 "god_distance": pred["god_distance_e"],
                 "actual_coupling_strength": actual["coupling_strength"],
@@ -273,12 +304,14 @@ def benchmark(
 
     avg_e_error = np.mean([r["e_error"] for r in results])
     avg_h_error = np.mean([r["h_error"] for r in results])
+    avg_baseline_h_error = np.mean([r["baseline_h_error"] for r in results])
     avg_coupling_error = np.mean([r["coupling_error"] for r in results])
 
     return {
         "n_test": len(results),
         "avg_e_betti0_error": float(avg_e_error),
         "avg_h_betti0_error": float(avg_h_error),
+        "avg_baseline_h_betti0_error": float(avg_baseline_h_error),
         "avg_coupling_error": float(avg_coupling_error),
         "per_geometry": results,
     }

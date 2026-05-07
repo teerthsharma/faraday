@@ -44,10 +44,10 @@ def main():
     log.info("learning_topological_operator_T")
     gt.learn_T()
     
-    # 3. Perform Banach Fixed-Point Burn (Power Iteration)
-    log.info("starting_banach_burn_iteration", total_epochs=args.epochs)
+    # 3. Perform Spectral Fixed-Point Burn (Power Iteration)
+    log.info("starting_spectral_burn_iteration", total_epochs=args.epochs)
     
-    # Manually run the loop so we can emit 'burn_epoch' events for the daemon
+    # Manually run the loop so we can emit 'spectral_epoch' events for the daemon
     T = gt.T_matrix
     x = np.random.rand(T.shape[0])
     x = x / np.linalg.norm(x)
@@ -59,15 +59,15 @@ def main():
             x_new = x_new / norm
             
         sign_correction = 1.0 if np.dot(x_new, x) >= 0 else -1.0
-        delta = float(np.linalg.norm(x_new - sign_correction * x))
+        spectral_residual = float(np.linalg.norm(x_new - sign_correction * x))
         x = sign_correction * x_new
         
         # EMIT TELEMETRY FOR DAEMON
         if epoch % 10 == 0 or epoch == args.epochs:
-            print(f'{{"event": "burn_epoch", "epoch": {epoch}, "banach_loss": {delta}, "betti_1_err": 0.0, "timestamp": "{time.time()}"}}', flush=True)
+            print(f'{{"event": "spectral_epoch", "epoch": {epoch}, "spectral_residual": {spectral_residual}, "betti_1_err": 0.0, "timestamp": "{time.time()}"}}', flush=True)
 
-        if delta < 1e-16:
-            log.info("converged_to_machine_epsilon", epoch=epoch, delta=delta)
+        if spectral_residual < 1e-16:
+            log.info("converged_to_machine_epsilon", epoch=epoch, spectral_residual=spectral_residual)
             break
 
     gt.god_tensor = x
@@ -76,7 +76,7 @@ def main():
     end_time = time.time()
     total_duration = end_time - start_time
     
-    log.info("massive_benchmark_complete", duration_s=total_duration, final_loss=delta)
+    log.info("massive_benchmark_complete", duration_s=total_duration, final_residual=spectral_residual)
     
     # Save results
     gt.save_checkpoint(args.checkpoint, args.epochs, {})
