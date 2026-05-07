@@ -1,38 +1,12 @@
-Banach Fixed-Point Theorem and Convergence
-=========================================
+Perron-Frobenius Theorem and Convergence
+========================================
 
 The iterative scheme used to find the God Tensor is a concrete application of
-the **Banach fixed-point theorem** (also called the contraction mapping theorem),
-the foundational result in metric fixed-point theory.
+the **power iteration** method, whose convergence is guaranteed by the
+**Perron-Frobenius theorem** and related spectral gap theory.
 
-Contraction Mapping
--------------------
-
-A mapping :math:`f: X \to X` on a complete metric space :math:`(X, d)` is a
-**contraction** if there exists a constant :math:`0 \leq q < 1` such that:
-
-.. math::
-
-   d\big(f(x), f(y)\big) \leq q \cdot d(x, y) \quad \forall x, y \in X
-
-The constant :math:`q` is called the **Lipschitz constant**.
-
-Banach's Theorem
-----------------
-
-If :math:`f` is a contraction on a complete metric space, then:
-
-1. :math:`f` has a **unique fixed point** :math:`x^* \in X`
-2. For any initial point :math:`x_0`, the iteration
-
-   .. math::
-
-      x_{n+1} = f(x_n)
-
-   converges to :math:`x^*` at rate :math:`O(q^n)`
-
-Power Iteration as Contraction
------------------------------
+Power Iteration as Spectral Convergence
+---------------------------------------
 
 Faraday's iteration is:
 
@@ -40,8 +14,7 @@ Faraday's iteration is:
 
    f(\mathbf{x}) = \text{normalize}(T \, \mathbf{x})
 
-This is **not** a strict contraction on the unit sphere under Euclidean distance.
-However, on the unit sphere, the operator :math:`\mathbf{x} \mapsto T\mathbf{x}`
+On the unit sphere, the operator :math:`\mathbf{x} \mapsto T\mathbf{x}`
 has a well-defined dominant eigenvector — the **Perron-Frobenius eigenvector** —
 which is the fixed point of the un-normalized iteration.
 
@@ -50,16 +23,16 @@ On :math:`S^{d-1}`, power iteration converges geometrically:
 
 .. math::
 
-   \|\mathbf{x}_n - \mathbf{x}^*\| \leq C \cdot |\lambda_1 / \lambda_2|^n
+   \|\mathbf{x}_n - \mathbf{x}^*\| \leq C \cdot |\lambda_2 / \lambda_1|^n
 
 where :math:`\lambda_1` and :math:`\lambda_2` are the largest and second-largest
-singular values of :math:`T`. The convergence rate is determined by the
-**spectral gap** :math:`|\lambda_1/\lambda_2|`.
+eigenvalues of :math:`T` by magnitude. The convergence rate is determined by the
+**spectral gap** :math:`|\lambda_2/\lambda_1|`.
 
 Spectral Properties of T
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-- :math:`T` is learned from data; its singular values depend on the geometry set
+- :math:`T` is learned from data; its eigenvalues depend on the geometry set
 - A **large spectral gap** → fast convergence (few iterations needed)
 - A **small spectral gap** → slow convergence (many iterations needed)
 - A rank-deficient :math:`T` (fewer samples than dimensions) has :math:`\lambda_i = 0`
@@ -72,7 +45,7 @@ Convergence Criteria in Faraday
 
 Faraday uses two convergence criteria in ``GodTensor.find_fixed_point``:
 
-1. **Fixed-point residual** (primary):
+1. **Spectral residual** (primary):
 
    .. math::
 
@@ -94,7 +67,7 @@ Why Normalization?
 ~~~~~~~~~~~~~~~~~
 
 Without normalization, :math:`\mathbf{x}_{n+1} = T\mathbf{x}_n` grows or decays
-geometrically as :math:`\|T\|^n`. Normalization constrains the iterates to the
+geometrically as :math:`|\lambda_1|^n`. Normalization constrains the iterates to the
 unit sphere, making the iteration **scale-invariant** — independent of the
 absolute magnitude of :math:`T`.
 
@@ -110,8 +83,8 @@ algorithm applied to the electromagnetic coupling operator.
 References
 ----------
 
-- S. Banach. "Sur les opérations dans les ensembles abstraits et leur
-  application aux équations intégrales." *Fundamenta Mathematicae*, 3:133–181, 1922.
+- O. Perron. "Zur Theorie der Matrices." *Mathematische Annalen*, 64(2):248–263, 1907.
+- G. Frobenius. "Ueber Matrizen aus nicht negativen Elementen." *Sitzungsberichte der Königlich Preussischen Akademie der Wissenschaften*, 456–477, 1912.
 - D. Kincaid, E. Cheney. *Numerical Analysis*, 3rd ed., Brooks/Cole, 2002.
   Chapter 9: Iterative Methods for Solving Linear Systems.
 - A. N. Langville, C. D. Meyer. *Google's PageRank and Beyond*. Johns Hopkins

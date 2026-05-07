@@ -1,11 +1,15 @@
 """
-execution_daemon.py — Autonomous Banach Fixed-Point Supervisor
+execution_daemon.py — Autonomous Spectral Fixed-Point Supervisor
 
 Manages the 2 000 000-epoch burn run of the God Tensor with:
   • Per-epoch JSON telemetry parsing (structlog stdout pipe)
   • Immutable append-only transcript.csv + convergence_log.jsonl ledgers
   • Git commit + push every 10 000 epochs (The Pulse)
   • NaN / 500%-spike divergence halt with FATAL_DIVERGENCE.md dump
+
+Mathematical Note: This supervisor monitors a spectral iteration
+governed by Perron-Frobenius theory, converging to the principal
+eigenvector of the learned E-H coupling matrix.
 
 Usage
 -----
@@ -23,6 +27,7 @@ import signal
 import subprocess
 import sys
 import time
+import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Event, Thread
@@ -99,8 +104,6 @@ def _git_runner(git_dir: Path):
 # Ledger writer — append-only, thread-safe via file.seek
 # ---------------------------------------------------------------------------
 
-import hashlib
-
 class LedgerWriter:
     """
     Appends rows to transcript.csv and convergence_log.jsonl.
@@ -141,7 +144,7 @@ class LedgerWriter:
                 writer = csv.DictWriter(
                     fh,
                     fieldnames=[
-                        "epoch", "banach_loss", "betti_0_err",
+                        "epoch", "spectral_residual", "betti_0_err",
                         "betti_1_err", "betti_2_err", "timestamp", "hash"
                     ],
                 )
@@ -154,7 +157,7 @@ class LedgerWriter:
         self._csv_writer = csv.DictWriter(
             self._csv_fh,
             fieldnames=[
-                "epoch", "banach_loss", "betti_0_err",
+                "epoch", "spectral_residual", "betti_0_err",
                 "betti_1_err", "betti_2_err", "timestamp", "hash"
             ],
         )
@@ -165,8 +168,13 @@ class LedgerWriter:
         if epoch <= self._skip_until:
             return
 
+        # Handle legacy 'banach_loss' key
+        residual = record.get("spectral_residual")
+        if residual is None:
+            residual = record.get("banach_loss", "")
+
         # Cryptographic Hash Chain
-        data_str = f"{epoch}|{record.get('banach_loss')}|{record.get('betti_0_err')}|{record.get('betti_1_err')}|{record.get('betti_2_err')}|{record.get('timestamp')}|{self._last_hash}"
+        data_str = f"{epoch}|{residual}|{record.get('betti_0_err')}|{record.get('betti_1_err')}|{record.get('betti_2_err')}|{record.get('timestamp')}|{self._last_hash}"
         current_hash = hashlib.sha256(data_str.encode('utf-8')).hexdigest()
         self._last_hash = current_hash
         record["hash"] = current_hash
@@ -174,13 +182,13 @@ class LedgerWriter:
         # CSV
         self._csv_fh.seek(0, os.SEEK_END)
         self._csv_writer.writerow({
-            "epoch":        record.get("epoch", ""),
-            "banach_loss":  record.get("banach_loss", ""),
-            "betti_0_err":  record.get("betti_0_err", ""),
-            "betti_1_err":  record.get("betti_1_err", ""),
-            "betti_2_err":  record.get("betti_2_err", ""),
-            "timestamp":    record.get("timestamp", ""),
-            "hash":         record.get("hash", ""),
+            "epoch":             record.get("epoch", ""),
+            "spectral_residual": residual,
+            "betti_0_err":       record.get("betti_0_err", ""),
+            "betti_1_err":       record.get("betti_1_err", ""),
+            "betti_2_err":       record.get("betti_2_err", ""),
+            "timestamp":         record.get("timestamp", ""),
+            "hash":              record.get("hash", ""),
         })
         self._csv_fh.flush()
 
@@ -203,7 +211,7 @@ class GitPulse:
     Handles git add → commit → push every ``commit_every`` epochs.
 
     The commit message uses live telemetry, e.g.:
-        chore: Epoch 10000 Reached. Betti-1 Error: 0.034 | Banach Loss: 0.0089
+        chore: Epoch 10000 Reached. Betti-1 Error: 0.034 | Spectral Residual: 0.0089
     """
 
     def __init__(
@@ -231,11 +239,11 @@ class GitPulse:
 
         epoch      = telemetry.get("epoch", current_epoch)
         b1_err     = _fmt(telemetry.get("betti_1_err"))
-        banach     = _fmt(telemetry.get("banach_loss"))
+        residual   = _fmt(telemetry.get("spectral_residual") or telemetry.get("banach_loss"))
 
         msg = (
             f"chore: Epoch {epoch} Reached. "
-            f"Betti-1 Error: {b1_err} | Banach Loss: {banach}"
+            f"Betti-1 Error: {b1_err} | Spectral Residual: {residual}"
         )
 
         # Stage only the ledger files (never stage code artefacts)
@@ -248,7 +256,7 @@ class GitPulse:
             self._last_commit_epoch = current_epoch
             print(
                 f"[Pulse] {_now_iso()}  committed epoch {epoch}  "
-                f"Betti-1={b1_err}  Banach={banach}",
+                f"Betti-1={b1_err}  Residual={residual}",
                 flush=True,
             )
             return True
@@ -275,11 +283,11 @@ def _fmt(val: object) -> str:
 
 class DivergenceMonitor:
     """
-    Tracks banach_loss over the last ``window`` epochs.
+    Tracks spectral_residual over the last ``window`` epochs.
 
     Halts if:
-      • banach_loss becomes NaN
-      • banach_loss exceeds ``spike_threshold × window_avg``
+      • spectral_residual becomes NaN
+      • spectral_residual exceeds ``spike_threshold × window_avg``
     """
 
     def __init__(
@@ -294,22 +302,22 @@ class DivergenceMonitor:
         self._halt_requested  = False
         self._halt_reason: str | None = None
 
-    def update(self, epoch: int, banach_loss: float) -> None:
+    def update(self, epoch: int, spectral_residual: float) -> None:
         """
-        Record a new loss value.  Sets ``halt_requested`` on divergence.
+        Record a new residual value.  Sets ``halt_requested`` on divergence.
         """
         if self._halt_requested:
             return
 
         # ── NaN trap ────────────────────────────────────────────────────
-        if math.isnan(banach_loss):
+        if math.isnan(spectral_residual):
             self._halt_requested = True
             self._halt_reason = (
-                f"NaN detected at epoch {epoch} — banach_loss=NaN"
+                f"NaN detected at epoch {epoch} — residual=NaN"
             )
             return
 
-        self._current.append(banach_loss)
+        self._current.append(spectral_residual)
 
         # Once current buffer is full, roll it into prev_window
         if len(self._current) == self._window:
@@ -317,18 +325,13 @@ class DivergenceMonitor:
             self._current = []
 
         # ── Spike trap ─────────────────────────────────────────────────
-        # Fire only when we have a genuine divergence: the baseline must be
-        # meaningfully non-zero (avg > 1e-7) AND the new value must exceed
-        # spike_threshold × that baseline.
-        # This dual guard prevents false halts when banach_loss has already
-        # converged to numerical noise (typically 1e-9 to 1e-6 range).
         if len(self._prev_window) == self._window:
             avg = sum(self._prev_window) / self._window
-            if avg > 1e-7 and banach_loss > self._spike_threshold * avg:
+            if avg > 1e-7 and spectral_residual > self._spike_threshold * avg:
                 self._halt_requested = True
                 self._halt_reason = (
                     f"Spike halt at epoch {epoch}: "
-                    f"banach_loss={banach_loss:.6g} exceeds "
+                    f"spectral_residual={spectral_residual:.6g} exceeds "
                     f"{self._spike_threshold}× window-avg={avg:.6g}"
                 )
 
@@ -367,14 +370,14 @@ def dump_fatal_divergence(
         "",
         "## Last 100 Epoch Records",
         "",
-        "| Epoch | Banach Loss | Betti-0 Err | Betti-1 Err | Betti-2 Err | Timestamp | Hash |",
-        "|------:|------------:|------------:|------------:|------------:|-----------|------|",
+        "| Epoch | Spectral Residual | Betti-0 Err | Betti-1 Err | Betti-2 Err | Timestamp | Hash |",
+        "|------:|------------------:|------------:|------------:|------------:|-----------|------|",
     ]
 
     for rec in records[-100:]:
         lines.append(
             f"| {rec.get('epoch', '')} "
-            f"| {rec.get('banach_loss', '')} "
+            f"| {rec.get('spectral_residual') or rec.get('banach_loss', '')} "
             f"| {rec.get('betti_0_err', '')} "
             f"| {rec.get('betti_1_err', '')} "
             f"| {rec.get('betti_2_err', '')} "
@@ -432,12 +435,9 @@ def parse_epoch_line(line: str) -> dict | None:
     """
     Parse a single JSON structlog line from stdout.
 
-    Returns a flat dict with keys ``epoch, banach_loss, betti_0_err,
+    Returns a flat dict with keys ``epoch, spectral_residual, betti_0_err,
     betti_1_err, betti_2_err, timestamp`` or ``None`` if the line is not
-    an epoch record (e.g. a debug/info log from a system component).
-
-    On JSON decode failure the line is returned as ``{"raw": line}`` so the
-    caller can record it as a parse error rather than silently dropping it.
+    an epoch record.
     """
     try:
         obj = json.loads(line)
@@ -448,9 +448,8 @@ def parse_epoch_line(line: str) -> dict | None:
         return None
 
     # Accept any event name that carries epoch telemetry
-    # (the burn loop emits event="burn_epoch", FDTD emits "fdtd_step")
     event = obj.get("event", "")
-    if event not in ("burn_epoch", "epoch", "fixed_point_progress", "fdtd_step"):
+    if event not in ("spectral_epoch", "burn_epoch", "epoch", "fixed_point_progress", "fdtd_step"):
         return None
 
     epoch = obj.get("epoch")
@@ -465,12 +464,12 @@ def parse_epoch_line(line: str) -> dict | None:
             return float("nan")
 
     return {
-        "epoch":       int(epoch),
-        "banach_loss": _nan(obj.get("banach_loss")),
-        "betti_0_err": _nan(obj.get("betti_0_err")),
-        "betti_1_err": _nan(obj.get("betti_1_err")),
-        "betti_2_err": _nan(obj.get("betti_2_err")),
-        "timestamp":   str(obj.get("timestamp") or ""),
+        "epoch":             int(epoch),
+        "spectral_residual": _nan(obj.get("spectral_residual") or obj.get("banach_loss")),
+        "betti_0_err":       _nan(obj.get("betti_0_err")),
+        "betti_1_err":       _nan(obj.get("betti_1_err")),
+        "betti_2_err":       _nan(obj.get("betti_2_err")),
+        "timestamp":         str(obj.get("timestamp") or ""),
     }
 
 
@@ -532,9 +531,7 @@ def run_daemon(
     ledger = LedgerWriter(csv_file, jsonl_file, skip_until=skip_until)
 
     # ── Divergence monitor ───────────────────────────────────────────────
-    # For FDTD, divergence is defined as norm (banach_loss mapped) > 10.0
-    spike_thresh = SPIKE_THRESHOLD if mode == "train" else 10.0
-    monitor = DivergenceMonitor(spike_threshold=spike_thresh)
+    monitor = DivergenceMonitor()
 
     # ── Git pulse ────────────────────────────────────────────────────────
     pulse = GitPulse(
@@ -598,7 +595,6 @@ def run_daemon(
     )
 
     # ── I/O threads ──────────────────────────────────────────────────────
-    import threading
     parsed_records: list[dict] = []
     latest_telemetry: dict = {}
 
@@ -624,7 +620,7 @@ def run_daemon(
         latest_telemetry.update(record)
 
         # Check divergence
-        monitor.update(record["epoch"], record["banach_loss"])
+        monitor.update(record["epoch"], record["spectral_residual"])
 
         # Try git commit
         pulse.try_commit(record["epoch"], record)
@@ -632,11 +628,11 @@ def run_daemon(
         # Progress heartbeat every 1 000 epochs
         if record["epoch"] % 1000 == 0:
             b1  = _fmt(record["betti_1_err"])
-            bl  = _fmt(record["banach_loss"])
+            res = _fmt(record["spectral_residual"])
             print(
                 f"[Heartbeat] {_now_iso()}  "
                 f"epoch={record['epoch']:,}  "
-                f"Betti-1={b1}  Banach={bl}",
+                f"Betti-1={b1}  Residual={res}",
                 flush=True,
             )
 
@@ -649,8 +645,6 @@ def run_daemon(
     reader.start()
 
     # ── Main loop: wait for subprocess to finish or halt ─────────────────
-    halt_flag = Event()
-
     def poll_stderr():
         """Consume stderr to prevent pipe deadlock."""
         try:
@@ -738,7 +732,7 @@ def run_daemon(
     print(
         f"[Daemon] {_now_iso()}  completed  epochs={epochs}  "
         f"final_Betti-1={_fmt(latest_telemetry.get('betti_1_err'))}  "
-        f"final_Banach={_fmt(latest_telemetry.get('banach_loss'))}",
+        f"final_Residual={_fmt(latest_telemetry.get('spectral_residual'))}",
         flush=True,
     )
 
@@ -751,7 +745,7 @@ def main() -> None:
     import argparse
 
     p = argparse.ArgumentParser(
-        description="Autonomous Banach fixed-point execution daemon",
+        description="Autonomous Spectral fixed-point execution daemon",
     )
     p.add_argument(
         "--epochs", type=int, default=DEFAULT_EPOCHS,

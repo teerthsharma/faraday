@@ -2,7 +2,7 @@
 
 **Invented by [Teerth Sharma](https://teerthsharma.vercel.app/) · [github.com/teerthsharma/faraday](https://github.com/teerthsharma/faraday)**
 
-> ⚡ *Faraday learns a reduced-order topological operator on FDFD-derived electromagnetic fingerprints — a Banach-fixed coupling tensor that converges to machine epsilon.*
+> ⚡ *Faraday learns a reduced-order topological operator on FDFD-derived electromagnetic fingerprints — a spectral-fixed coupling tensor that converges to machine epsilon.*
 
 ```bash
 pip install faraday
@@ -14,12 +14,12 @@ git clone https://github.com/teerthsharma/faraday.git && cd faraday && pip insta
 
 ## What We Achieved
 
-On **May 5, 2026**, Faraday completed a **50,000-epoch Banach fixed-point burn** on a 3D dielectric electromagnetic solver. The convergence is **verifiable**:
+On **May 5, 2026**, Faraday completed a **50,000-epoch spectral fixed-point burn** on a 3D dielectric electromagnetic solver. The convergence is **verifiable**:
 
 ```
 Epoch 50,000 of 50,000  ████████████████████████████████  100%
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Banach Loss:    1.755e-16   ← machine epsilon (fixed point reached)
+  Spectral Residual:    1.755e-16   ← machine epsilon (fixed point reached)
   Betti-0 Error: 1.2564      ← stable topological invariant
   Betti-1 Error: 0.0032812   ← loop/hole coupling error (plateaued)
   Betti-2 Error: 1.43e-8    ← essentially zero
@@ -29,7 +29,7 @@ Epoch 50,000 of 50,000  ██████████████████�
   Git push:       committed + pushed to main              ✓
 ```
 
-**The God Tensor reached a true mathematical fixed point.** `1.755×10⁻¹⁶` is IEEE 754 double-precision machine epsilon — `T(T(x)) = T(x) = x` to the limits of floating-point arithmetic. No interpolation. No aggregation. 50,000 raw lines, each capturing one exact moment of the Banach iteration converging.
+**The God Tensor reached a true mathematical fixed point.** `1.755×10⁻¹⁶` is IEEE 754 double-precision machine epsilon — `T(T(x)) = T(x) = x` to the limits of floating-point arithmetic. No interpolation. No aggregation. 50,000 raw lines, each capturing one exact moment of the spectral iteration converging.
 
 ---
 
@@ -57,14 +57,14 @@ Cavity Geometry  →  FDFD  →  |E| point cloud  →  Persistent Homology
                                         Learn T: E-embedding → H-embedding
                                               via least-squares on the data
                                                         ↓
-                                        Banach iteration → God Tensor (x*)
+                                        Spectral iteration → God Tensor (x*)
                                                         ↓
                             T(x*) = x*  (learned invariant of E/H coupling)
 ```
 
 The **God Tensor** `x*` is the fixed point of the learned operator `T`. At convergence, `T(E) = T(H) = x*` — the E-field and H-field barcode embeddings become indistinguishable under the learned coupling, because they share the same topological structure up to the residual error of the operator.
 
-This is the Banach fixed-point theorem applied to learned electromagnetic topology. The operator `T` is fit to FDFD-derived barcodes via least squares. Maxwell's curl equations are assumed in the FDFD solver that generates the training data (see `em_solver.py:325–330`).
+This is the Perron-Frobenius theorem applied to learned electromagnetic topology. The operator `T` is fit to FDFD-derived barcodes via least squares. Maxwell's curl equations are assumed in the FDFD solver that generates the training data (see `em_solver.py:325–330`).
 
 ---
 
@@ -72,7 +72,7 @@ This is the Banach fixed-point theorem applied to learned electromagnetic topolo
 
 | Metric | Value | Meaning |
 |--------|-------|---------|
-| **Banach Loss** | `1.755e-16` | ‖T(x_n) − x_n‖ — at machine epsilon, the operator has fully converged |
+| **Spectral Residual** | `1.755e-16` | ‖T(x_n) − x_n‖ — at machine epsilon, the operator has fully converged |
 | **Betti-0 Error** | `1.256` | How much the connected-component signature deviates from perfect coupling |
 | **Betti-1 Error** | `0.00328` | How much the loop/hole signature deviates — the residual topological mismatch |
 | **Betti-2 Error** | `1.43e-8` | Negligible higher-order structure contribution |
@@ -96,7 +96,7 @@ Hilbert Series Embedding → 50D fixed-length vector
       ↓
 Learn T: E-embedding → H-embedding via lstsq(T @ E ≈ H)
       ↓
-Banach Fixed-Point Iteration → God Tensor x*
+Spectral Fixed-Point Iteration → God Tensor x*
       ↓
 Predict E/H for new geometries via KNN + God Tensor
 ```
@@ -130,7 +130,7 @@ T_raw, *_ = lstsq(E_latent, H_latent)      # E_latent @ T_raw = H_latent
 T = T_raw.T  # → (latent_dim, latent_dim) = (16, 16)
 ```
 
-**5. Banach Fixed-Point** — `god_tensor.py`
+**5. Spectral Fixed-Point** — `god_tensor.py`
 ```python
 x = mean(E_latent_all, axis=0)
 x = x / norm(x)
@@ -138,7 +138,7 @@ for epoch in range(epochs):
     x_new = normalize(T @ x)
     delta = norm(x_new - x)
     x = x_new
-    # log: Banach Loss, Betti-0/1/2 errors
+    # log: Spectral Residual, Betti-0/1/2 errors
 god_tensor = x  # converged — T(god_tensor) ≈ god_tensor
 ```
 
@@ -201,18 +201,18 @@ python execution_daemon.py --epochs 50000 --dim 3 --n-geometries 20 --nx 30 --ny
 python execution_daemon.py --epochs 1000000 --dim 3 --n-geometries 100 --nx 60 --ny 60 --num-modes 8 --seed 42 --git-every 10000
 ```
 
-The **execution_daemon.py** runs the Banach iteration as a supervised subprocess:
+The **execution_daemon.py** runs the spectral iteration as a supervised subprocess:
 
 - **Ledger**: every epoch → one line in `transcript.csv` + `convergence_log.jsonl` (append-mode, explicit `seek` before write for NFS safety)
 - **Divergence Monitor**: NaN trap + 500% spike trap with two-buffer rolling window + `avg > 1e-7` guard to avoid false halts at fixed-point convergence
 - **Git Pulse**: every 10k epochs → `git add` → commit with live telemetry → `git push` (all `check=False` — network failures do not crash the daemon)
 - **Checkpointing**: every 10k epochs → `burn_checkpoint.npz` (god_tensor, T_matrix, epoch, RNG state) + `burn_checkpoint_gt.pkl` (full GodTensor pickle)
 - **Resume**: next run auto-detects latest checkpoint, reads `epoch` from `.npz` via `np.load()`, skips ledger entries ≤ checkpoint epoch, resumes from `epoch + 1`
-- **Hash Chain**: each ledger epoch carries `SHA256(epoch‖banach_loss‖betti_0‖betti_1‖betti_2‖timestamp‖prev_hash)`; resume reconstructs chain from `_last_hash`
+- **Hash Chain**: each ledger epoch carries `SHA256(epoch‖spectral_residual‖betti_0‖betti_1‖betti_2‖timestamp‖prev_hash)`; resume reconstructs chain from `_last_hash`
 
 ```
 runs/
-├── transcript.csv          # 50,000 lines: epoch, banach, betti_0/1/2, timestamp, hash
+├── transcript.csv          # 50,000 lines: epoch, spectral_residual, betti_0/1/2, timestamp, hash
 ├── convergence_log.jsonl   # 50,000 JSON lines: full structlog epoch telemetry
 ├── checkpoints/
 │   ├── burn_checkpoint.npz       # god_tensor + T_matrix + epoch + rng_state
@@ -280,7 +280,7 @@ You can — the physics is well-established. Faraday is useful when:
 | The unified E×H entity | The 16D vector `x* = T(x*)` invariant under the learned coupling operator |
 | Fixed point `T(T(x)) = T(x)` | The embedding where E→T(E) and H→T(H) produce the same representation |
 | "Learned from data" | T was learned via `lstsq(E_emb, H_emb)` on FDFD-derived barcodes |
-| Banach convergence to ε | Power iteration on T's dominant eigenvector — guaranteed by Perron-Frobenius for ρ(T)≈1 |
+| Spectral convergence to ε | Power iteration on T's dominant eigenvector — guaranteed by Perron-Frobenius for ρ(T)≈1 |
 
 **Why it converged to 1e-16:**
 
@@ -314,7 +314,7 @@ faraday/
 │                               # run_validation_experiment, EpochTelemetry,
 │                               # run_burn() with resume + CHECKPOINT_EVERY support
 │
-├── execution_daemon.py        # Autonomous Banach burn supervisor
+├── execution_daemon.py        # Autonomous Spectral burn supervisor
 │                              # LedgerWriter, DivergenceMonitor, GitPulse
 │                              # checkpoint detection, skip_until resume guard
 │                              # SHA-256 hash chain across all ledger epochs
@@ -324,7 +324,7 @@ faraday/
 │   └── test_god_tensor.py   # Pipeline, T-matrix, fixed point, predict + validation (16 tests)
 │
 ├── docs/source/
-│   ├── theory.rst            # Maxwell's equations, PH, Banach fixed-point, God Tensor
+│   ├── theory.rst            # Maxwell's equations, PH, Perron-Frobenius theorem, God Tensor
 │   ├── quickstart.rst
 │   └── tutorials/
 │
@@ -362,7 +362,7 @@ Requires Python ≥ 3.10, numpy ≥ 1.24, scipy ≥ 1.10, ripser ≥ 0.6.
   title = {Computational Faraday Tensor},
   url = {https://github.com/teerthsharma/faraday},
   version = {0.1.0},
-  year = {2026,
+  year = {2026}
 }
 ```
 
@@ -370,6 +370,6 @@ Requires Python ≥ 3.10, numpy ≥ 1.24, scipy ≥ 1.10, ripser ≥ 0.6.
 
 ## Acknowledgements
 
-Built by **Teerth Sharma** (`@teerthsharma`) as the God Tensor project — a learned topological operator on FDFD-derived electromagnetic barcodes, converging to a Banach fixed point at machine epsilon. First committed to GitHub May 2026.
+Built by **Teerth Sharma** (`@teerthsharma`) as the God Tensor project — a learned topological operator on FDFD-derived electromagnetic barcodes, converging to a spectral fixed point at machine epsilon. First committed to GitHub May 2026.
 
-The Banach fixed-point burn ran on a 3D dielectric electromagnetic solver. All convergence telemetry is stored in `runs/transcript.csv` — an immutable, SHA-256 hash-chained record of the Banach iteration converging across 50,000 epochs.
+The spectral fixed-point burn ran on a 3D dielectric electromagnetic solver. All convergence telemetry is stored in `runs/transcript.csv` — an immutable, SHA-256 hash-chained record of the spectral iteration converging across 50,000 epochs.

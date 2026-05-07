@@ -88,7 +88,7 @@ class EpochTelemetry:
     """A single epoch's telemetry record."""
 
     epoch: int
-    banach_loss: float
+    spectral_residual: float
     betti_0_err: float
     betti_1_err: float
     betti_2_err: float
@@ -533,7 +533,7 @@ def save_report(
 
 
 # ---------------------------------------------------------------------------
-# Burn mode: 2M-epoch Banach fixed-point execution with per-epoch JSON logging
+# Spectral Fixed-Point Burn: 2M-epoch Perron-Frobenius execution with per-epoch JSON logging
 # ---------------------------------------------------------------------------
 
 
@@ -551,25 +551,29 @@ def run_burn(
     checkpoint_path: str | None = None,
 ) -> None:
     """
-    Run the Banach fixed-point burn-in for exactly ``epochs`` iterations.
+    Run the Spectral fixed-point burn-in for exactly ``epochs`` iterations.
 
     Emits one JSON structlog line per epoch to stdout so the execution
     daemon can capture and parse it.  Lines contain::
 
         {
-          "event": "burn_epoch",
+          "event": "spectral_epoch",
           "epoch": 1,
-          "banach_loss": 0.123,
+          "spectral_residual": 0.123,
           "betti_0_err": 0.045,
           "betti_1_err": 0.078,
           "betti_2_err": 0.012,
           "timestamp": "2026-05-05T02:30:00.000Z"
         }
 
+    Mathematical Note: This is a normalized power method (spectral iteration)
+    that converges to the dominant eigenvector of the coupling matrix T,
+    as guaranteed by Perron-Frobenius theory.
+
     Parameters
     ----------
     epochs : int
-        Total Banach fixed-point iterations to run.
+        Total iterations to run.
     dim : int
         Manifold embedding dimension (passed to ManifoldProjector).
     n_geometries, nx, ny, num_modes, seed
@@ -622,12 +626,12 @@ def run_burn(
         rng.bit_generator.state = rng_state
         burn_log.info("resumed", from_epoch=start_epoch)
 
-    # ── Phase 3: Banach fixed-point burn loop ────────────────────────────
-    # x IS the god_tensor (current fixed-point estimate)
+    # ── Phase 3: Spectral fixed-point burn loop ────────────────────────────
+    # x IS the god_tensor (current principal eigenvector estimate)
     x = god_tensor.copy()
 
     for epoch in range(start_epoch + 1, epochs + 1):
-        # Banach step: T(x) then normalise
+        # Spectral step (Power Method): T(x) then normalise
         x_new = gt.T_matrix @ x
         norm = np.linalg.norm(x_new)
         if norm > 1e-10:
@@ -635,10 +639,7 @@ def run_burn(
 
         # Sign-invariant delta (eigenvector is defined up to ±1)
         sign_correction = 1.0 if np.dot(x_new, x) >= 0 else -1.0
-        delta = float(np.linalg.norm(x_new - sign_correction * x))
-
-        # Banach loss: ||T(x) - x||_2 after sign correction
-        banach_loss = delta
+        spectral_residual = float(np.linalg.norm(x_new - sign_correction * x))
 
         # ── Betti errors ──────────────────────────────────────────────
         # Project current eigenvector onto each training sample and compare
@@ -671,9 +672,9 @@ def run_burn(
         if epoch % log_every == 0:
             ts = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
             line = {
-                "event": "burn_epoch",
+                "event": "spectral_epoch",
                 "epoch": epoch,
-                "banach_loss": banach_loss,
+                "spectral_residual": spectral_residual,
                 "betti_0_err": betti_0_err,
                 "betti_1_err": betti_1_err,
                 "betti_2_err": betti_2_err,
@@ -745,7 +746,7 @@ def cli_main():
         "--epochs",
         type=int,
         default=None,
-        help="Number of Banach fixed-point iterations (burn mode)",
+        help="Number of Spectral fixed-point iterations (burn mode)",
     )
     parser.add_argument(
         "--dim",

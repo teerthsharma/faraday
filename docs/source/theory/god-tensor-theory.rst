@@ -70,7 +70,7 @@ Interpretation
 - :math:`\mathbf{g}` is the **semantic anchor** of E/H coupling, analogous to
   the [CLS] token in transformer language models
 
-Banach Fixed-Point Iteration
+Spectral Fixed-Point Iteration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Faraday finds :math:`\mathbf{g}` via iterative refinement:
@@ -81,7 +81,7 @@ Faraday finds :math:`\mathbf{g}` via iterative refinement:
 
 This is the **power iteration** method for finding the dominant eigenvector.
 Normalization prevents magnitude blow-up. The iteration converges to the
-eigenspace of the largest singular value of :math:`T`. See :doc:`banach-fixed-point`
+eigenspace of the largest singular value of :math:`T`. See :doc:`perron-frobenius-theorem`
 for convergence theory.
 
 God Score
@@ -115,7 +115,7 @@ embedding manifold.
 References
 ----------
 
-- Banach fixed-point theorem: L. Bhrier, *Introduction to Metric Spaces*, 2012
+- Perron-Frobenius theorem: C. MacCluer, *The many proofs and applications of Perron's theorem*, 2000
 - Power iteration: G. H. Golub, C. F. Van Loan. *Matrix Computations*, 4th ed., 2013
 - Coupling operators in physics: R. Jackiw, "Comments on 'The Unreasonable
   Effectiveness of Symmetry'." *International Journal of Modern Physics B*, 2003.

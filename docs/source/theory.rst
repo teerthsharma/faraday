@@ -12,7 +12,7 @@ Each document is self-contained and can be read independently.
    theory/persistent-homology
    theory/hilbert-embedding
    theory/god-tensor-theory
-   theory/banach-fixed-point
+   theory/perron-frobenius-theorem
    theory/hodge-decomposition
 
 Overview
@@ -39,9 +39,9 @@ Faraday synthesizes six theoretical pillars:
    * - God Tensor
      - T-matrix: :math:`T = Z_H Z_E^+`, coupling operator
      - Internal
-   * - Banach Fixed-Point
+   * - Perron-Frobenius Theorem
      - :math:`x_{n+1} = \text{normalize}(Tx_n)` → God Tensor
-     - Banach (1922)
+     - Perron (1907), Frobenius (1912)
    * - Hodge Decomposition
      - Theoretical framing: gradient/curl/harmonic components
      - Whitney (1957)
@@ -60,7 +60,7 @@ Core Pipeline
    (\mathbf{z}_E, \mathbf{z}_H)
    \xrightarrow{T = Z_H Z_E^+}
    T
-   \xrightarrow{\text{Banach}}
+   \xrightarrow{\text{Spectral}}
    \mathbf{g} = T(\mathbf{g})
 
 External Reading

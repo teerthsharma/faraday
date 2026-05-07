@@ -191,8 +191,8 @@ def topological_fingerprint(
         "confinement_ratio": confinement_ratio,
         "num_grid_points": int(np.sum(mag > threshold * mag.max())),
         "topological_score": float(
-            barcodes.get("betti_1", 0) * np.mean(barcodes.get("h1_lifetimes", [0]))
-            + barcodes.get("betti_0", 0) * np.mean(barcodes.get("h0_lifetimes", [0]))
+            barcodes.get("betti_1", 0) * (np.mean(barcodes["h1_lifetimes"]) if barcodes.get("h1_lifetimes") else 0.0)
+            + barcodes.get("betti_0", 0) * (np.mean(barcodes["h0_lifetimes"]) if barcodes.get("h0_lifetimes") else 0.0)
         ),
         "diagrams": barcodes.get("diagrams", []),
     }
