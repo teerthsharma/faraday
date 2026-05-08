@@ -53,12 +53,36 @@ and :math:`k^2` are the squared resonant wave numbers.
 Eigenvalue Spectrum
 ~~~~~~~~~~~~~~~~~~~
 
-- :math:`k^2 \leq 0` — the Laplacian is negative-semidefinite
-- The dominant (largest-magnitude) eigenvalue gives the **fundamental mode**
-- Higher modes have increasingly oscillatory field patterns
+- :math:`L` is negative-semidefinite, so its eigenvalues
+  :math:`\lambda = -k^2 \le 0`.
+- The fundamental cavity mode is the eigenpair with the *smallest*
+  :math:`k`, i.e. the eigenvalue of :math:`L` closest to zero.
+- Higher modes have larger :math:`|k|` and increasingly oscillatory
+  patterns.
 
-Faraday's solver uses ``scipy.sparse.linalg.eigsh`` with ``which="LM"``
-(Largest Magnitude) to extract these eigenpairs.
+Faraday's solver uses :func:`scipy.sparse.linalg.eigsh` in
+**shift-invert mode** with ``sigma=0`` and ``which="LM"`` to target the
+eigenvalues nearest the origin.  Shift-invert internally inverts
+:math:`L - \sigma I` once and runs Lanczos on the inverse, which is
+both faster and more numerically stable than the previous
+``which="SM"`` (smallest-magnitude) iteration on :math:`L` itself.
+
+Analytic reference
+~~~~~~~~~~~~~~~~~~
+
+For a rectangular PEC cavity of width :math:`w` and height :math:`h`
+the closed-form eigenvalues are
+
+.. math::
+
+   k_{mn}^2 = \left(\frac{m\pi}{w}\right)^2
+            + \left(\frac{n\pi}{h}\right)^2,
+   \qquad m, n = 1, 2, 3, \dots
+
+This identity is verified end-to-end in
+``tests/test_em_solver_analytic.py`` against the FDFD output to within
+:math:`5 \times 10^{-3}` relative error at :math:`80 \times 80`
+resolution.
 
 H-Field Derivation
 ------------------

@@ -41,27 +41,38 @@ Spectral Properties of T
 Faraday requires :math:`n_{\text{geometries}} \geq d = 16` for reliable convergence.
 
 Convergence Criteria in Faraday
-------------------------------
+-------------------------------
 
-Faraday uses two convergence criteria in ``GodTensor.find_fixed_point``:
+Eigenvectors are defined only up to a sign (the spectrum is invariant
+under :math:`x \mapsto -x`).  Faraday therefore measures the
+**sign-corrected** residual
 
-1. **Spectral residual** (primary):
+.. math::
+
+   r_n = \bigl\| \mathbf{x}_{n+1}
+        - \mathrm{sign}\!\bigl(\langle \mathbf{x}_{n+1}, \mathbf{x}_n\rangle\bigr)
+              \mathbf{x}_n\bigr\|_2.
+
+Two criteria are used in :meth:`GodTensor.find_fixed_point`:
+
+1. **Sign-corrected residual** (primary):
 
    .. math::
 
-      \|\mathbf{x}_{n+1} - \mathbf{x}_n\| < \epsilon_{\text{tol}}
+      r_n < \epsilon_{\text{tol}}
 
-   with :math:`\epsilon_{\text{tol}} = 10^{-7}`.
+   with default :math:`\epsilon_{\text{tol}} = 10^{-7}`.
 
 2. **Iteration limit** (safety cap):
+   :math:`n > n_{\text{max}}` with default :math:`n_{\text{max}} = 500`.
 
-   .. math::
-
-      n > n_{\text{max}}
-
-   with :math:`n_{\text{max}} = 500` to prevent infinite loops.
-
-If neither criterion is met, the solver raises ``ConvergenceError``.
+If the iteration hits the safety cap before reaching tolerance, the
+``GodTensor`` retains its current dominant-eigenvector estimate and
+``fixed_point_converged`` is left ``False``.  Empirically, for
+well-conditioned :math:`T` (spectral gap > 0.1) the residual drops to
+machine epsilon ($\approx 10^{-16}$) within a few hundred iterations,
+which is verified end-to-end in
+``tests/test_spectral_fixed_point.py``.
 
 Why Normalization?
 ~~~~~~~~~~~~~~~~~

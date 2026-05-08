@@ -20,11 +20,12 @@ Usage
 from __future__ import annotations
 
 import json
-import math
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -36,8 +37,11 @@ from faraday.em_solver import (
     solve_cavity_modes,
 )
 from faraday.god_tensor import GodTensor
+from faraday.logging import get_logger
 from faraday.manifold_projector import ManifoldProjector, embed_fingerprint
 from faraday.predict import predict_eh_barcode
+
+log = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Benchmark definitions
@@ -123,7 +127,7 @@ class BenchmarkReport:
 
 
 def run_benchmark(
-    name: str, fn, *args, **kwargs
+    name: str, fn: Callable[..., Any], *args: Any, **kwargs: Any
 ) -> BenchmarkResult:
     """Time a single benchmark function."""
     t0 = time.perf_counter()
@@ -210,7 +214,8 @@ def run_validation_experiment(
     """
     rng = np.random.default_rng(seed)
     n_train = round(n_total * train_fraction)
-    n_total - n_train
+    n_test_target = n_total - n_train  # used only for logging
+    log.debug("validation_split", n_train=n_train, n_test_target=n_test_target)
 
     # ── Step 1: generate all geometries ──────────────────────────────
     all_params: list[tuple[tuple[float, ...], str]] = []
@@ -386,7 +391,12 @@ def run_suite(
             f"Unknown suite {suite_name!r}. Available: {list(BENCHMARK_SUITES)}"
         )
 
-    cfg = BENCHMARK_SUITES[suite_name]
+    cfg: dict[str, Any] = BENCHMARK_SUITES[suite_name]
+    nx = int(cfg["nx"])
+    ny = int(cfg["ny"])
+    num_modes = int(cfg["num_modes"])
+    n_geometries = int(cfg["n_geometries"])
+    iters = int(cfg["iters"])
     results: list[BenchmarkResult] = []
     t0_total = time.perf_counter()
 
@@ -399,9 +409,9 @@ def run_suite(
             "solve_rectangular_cavity",
             solve_cavity_modes,
             geom_rect,
-            nx=cfg["nx"],
-            ny=cfg["ny"],
-            num_modes=cfg["num_modes"],
+            nx=nx,
+            ny=ny,
+            num_modes=num_modes,
         )
         results.append(r)
 
@@ -409,18 +419,15 @@ def run_suite(
             "solve_circular_cavity",
             solve_cavity_modes,
             geom_circ,
-            nx=cfg["nx"],
-            ny=cfg["ny"],
-            num_modes=cfg["num_modes"],
+            nx=nx,
+            ny=ny,
+            num_modes=num_modes,
         )
         results.append(r)
 
     # ── Barcode ─────────────────────────────────────────────────────────
     mode_data: ModeData = solve_cavity_modes(
-        geom_rect,
-        nx=cfg["nx"],  # type: ignore[index]
-        ny=cfg["ny"],  # type: ignore[index]
-        num_modes=cfg["num_modes"],  # type: ignore[index]
+        geom_rect, nx=nx, ny=ny, num_modes=num_modes
     )
     e_field = np.array(next(iter(mode_data["e_modes"].values()))["field"])
     h_field = np.array(next(iter(mode_data["h_modes"].values()))["field"])
@@ -457,16 +464,11 @@ def run_suite(
         results.append(r)
 
     # ── GodTensor end-to-end ────────────────────────────────────────────
-    def run_gt():
-        gt = GodTensor(n_geometries=cfg["n_geometries"])
-        gt.collect_training_data(
-            nx=cfg["nx"],
-            ny=cfg["ny"],
-            num_modes=cfg["num_modes"],
-            seed=42,
-        )
+    def run_gt() -> None:
+        gt = GodTensor(n_geometries=n_geometries)
+        gt.collect_training_data(nx=nx, ny=ny, num_modes=num_modes, seed=42)
         gt.learn_T()
-        gt.find_fixed_point(iters=cfg["iters"])
+        gt.find_fixed_point(iters=iters)
 
     for _run in range(n_runs):
         r = run_benchmark("god_tensor_full_pipeline", run_gt)
@@ -487,10 +489,10 @@ def run_suite(
 
     if include_validation:
         val_report = run_validation_experiment(
-            n_total=cfg.get("n_geometries", 30),
-            nx=cfg["nx"],
-            ny=cfg["ny"],
-            num_modes=cfg["num_modes"],
+            n_total=n_geometries,
+            nx=nx,
+            ny=ny,
+            num_modes=num_modes,
         )
         return benchmark_report, val_report
 
@@ -589,12 +591,15 @@ def run_burn(
         ``resume_from`` is None) and loading (when ``resume_from`` is set).
     """
     import sys
-    import math as _math
-    from faraday.logging import get_logger
 
     burn_log = get_logger("faraday.burn")
-    burn_log.info("burn_start", epochs=epochs, dim=dim, n_geometries=n_geometries,
-                  resume_from=resume_from)
+    burn_log.info(
+        "burn_start",
+        epochs=epochs,
+        dim=dim,
+        n_geometries=n_geometries,
+        resume_from=resume_from,
+    )
 
     # ── Phase 1: Collect training data (skipped on resume) ─────────────────
     if resume_from is None:
@@ -602,20 +607,21 @@ def run_burn(
         gt.collect_training_data(nx=nx, ny=ny, num_modes=num_modes, seed=seed)
         # ── Phase 2: Learn T matrix ─────────────────────────────────────────
         gt.learn_T()
-        # Initialise god_tensor from dominant eigenvector of T
-        eigenvalues, eigenvectors = np.linalg.eig(gt.T_matrix)
+        T = gt.T_matrix
+        if T is None:
+            raise RuntimeError("learn_T did not produce a T_matrix")
+        eigenvalues, eigenvectors = np.linalg.eig(T)
         dists = np.abs(eigenvalues - 1.0)
         best_idx = int(np.argmin(dists))
         god_tensor = np.real(eigenvectors[:, best_idx])
-        god_tensor = god_tensor / (np.linalg.norm(god_tensor) + 1e-10)
+        god_tensor = god_tensor / (np.linalg.norm(god_tensor) + 1e-12)
         gt.god_tensor = god_tensor
         rng = np.random.default_rng(seed)
         start_epoch = 0
     else:
-        # Load checkpoint: restore god_tensor, epoch, RNG state
+        if checkpoint_path is None:
+            raise ValueError("resume_from set but checkpoint_path is None")
         god_tensor, start_epoch, rng_state = GodTensor.load_checkpoint(checkpoint_path)
-        # Reconstruct gt for Betti computation (need samples + T + projectors)
-        # We reload from the full GodTensor pickle (the full object, not just npz)
         gt_path = checkpoint_path.replace(".npz", "_gt.pkl")
         try:
             gt = GodTensor.load(gt_path)
@@ -623,52 +629,38 @@ def run_burn(
             burn_log.error("checkpoint_gt_not_found", path=gt_path)
             sys.exit(1)
         rng = np.random.default_rng(0)
-        rng.bit_generator.state = rng_state
+        rng.bit_generator.state = dict(rng_state)
         burn_log.info("resumed", from_epoch=start_epoch)
 
     # ── Phase 3: Spectral fixed-point burn loop ────────────────────────────
-    # x IS the god_tensor (current principal eigenvector estimate)
+    T = gt.T_matrix
+    if T is None:
+        raise RuntimeError("burn loop requires a learned T_matrix")
     x = god_tensor.copy()
 
+    # Precompute the per-sample signatures' E/H latent matrices so we
+    # don't redo the autoencoder pass every epoch.
+    e_lat = np.stack([gt.projector_e.encode(s.e_embedding) for s in gt.samples])
+    e_under_T = e_lat @ T.T
+    e_under_T_n = e_under_T / (
+        np.linalg.norm(e_under_T, axis=1, keepdims=True) + 1e-12
+    )
+
+    spectral_residual = 0.0
     for epoch in range(start_epoch + 1, epochs + 1):
-        # Spectral step (Power Method): T(x) then normalise
-        x_new = gt.T_matrix @ x
-        norm = np.linalg.norm(x_new)
-        if norm > 1e-10:
+        x_new = T @ x
+        norm = float(np.linalg.norm(x_new))
+        if norm > 1e-12:
             x_new = x_new / norm
+        sign = 1.0 if float(np.dot(x_new, x)) >= 0 else -1.0
+        spectral_residual = float(np.linalg.norm(x_new - sign * x))
 
-        # Sign-invariant delta (eigenvector is defined up to ±1)
-        sign_correction = 1.0 if np.dot(x_new, x) >= 0 else -1.0
-        spectral_residual = float(np.linalg.norm(x_new - sign_correction * x))
-
-        # ── Betti errors ──────────────────────────────────────────────
-        # Project current eigenvector onto each training sample and compare
-        # predicted H topology against ground truth.
-        # Re-embed + compute fingerprint each epoch would be too slow for
-        # 2M iterations, so we use the manifold projection residual as
-        # a proxy for betti_0/1/2 errors — stable and differentiable.
-        # Reference betti values are the mean of the training set.
-        e_latent = np.array([gt.projector_e.encode(s.e_embedding) for s in gt.samples])
-        h_latent = np.array([gt.projector_h.encode(s.h_embedding) for s in gt.samples])
-
-        # Residual after one T application
-        e_under_T = e_latent @ gt.T_matrix.T
-        e_under_T_n = e_under_T / (np.linalg.norm(e_under_T, axis=1, keepdims=True) + 1e-10)
-
-        # Compute per-sample "convergence signature" — normalised dot product
-        # with the current fixed-point estimate
-        sigs = np.array(
-            [float(np.dot(e_under_T_n[j], x)) for j in range(len(e_under_T_n))]
-        )
-
-        # Betti-0 error: deviation of mean signature from 1 (ideal fixed pt)
+        sigs = e_under_T_n @ x
         betti_0_err = float(np.abs(1.0 - np.mean(sigs)))
-        # Betti-1 error: std of signatures — spread around the fixed point
         betti_1_err = float(np.std(sigs))
-        # Betti-2 error: skewness — asymmetry in convergence direction
+        # Use central-3rd moment as a lightweight asymmetry proxy.
         betti_2_err = float(np.mean((sigs - np.mean(sigs)) ** 3))
 
-        # ── Emit JSON structlog line ───────────────────────────────────
         if epoch % log_every == 0:
             ts = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
             line = {
@@ -680,24 +672,19 @@ def run_burn(
                 "betti_2_err": betti_2_err,
                 "timestamp": ts,
             }
-            # Write directly to stdout as a single line of JSON — no buffering
-            # issues because Python flushes on newline with print()
             print(json.dumps(line), flush=True)
 
-        # Advance
-        x = sign_correction * x_new
+        x = sign * x_new
 
-        # Inject small noise to keep rank(T) full (deterministic seed schedule)
+        # Tiny perturbation every 50k epochs keeps the iteration off
+        # any saddle that machine epsilon might trap us in.
         if epoch % 50000 == 0:
-            noise = rng.normal(0, 1e-8, size=x.shape)
-            x = x + noise
-            x = x / (np.linalg.norm(x) + 1e-10)
+            x = x + rng.normal(0, 1e-8, size=x.shape)
+            x = x / (np.linalg.norm(x) + 1e-12)
 
-        # Save checkpoint every 10k epochs
         if checkpoint_path is not None and epoch % 10_000 == 0:
             gt.god_tensor = x
-            rng_state = rng.bit_generator.state
-            gt.save_checkpoint(checkpoint_path, epoch, rng_state)
+            gt.save_checkpoint(checkpoint_path, epoch, dict(rng.bit_generator.state))
             gt.save(checkpoint_path.replace(".npz", "_gt.pkl"))
             burn_log.info("checkpoint_saved", epoch=epoch, path=checkpoint_path)
 

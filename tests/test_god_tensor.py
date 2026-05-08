@@ -6,7 +6,6 @@ Tests for faraday GodTensor pipeline.
 """
 
 import numpy as np
-import pytest
 
 
 class TestGodTensor:
@@ -160,7 +159,13 @@ class TestPredict:
 class TestIntegration:
     def test_full_pipeline_small(self):
         """Run the full pipeline with a small dataset and verify end-to-end."""
-        from faraday import GodTensor, CavityGeometry, CavityShape, solve_cavity_modes, coupled_fingerprint
+        from faraday import (
+            CavityGeometry,
+            CavityShape,
+            GodTensor,
+            coupled_fingerprint,
+            solve_cavity_modes,
+        )
         from faraday.predict import predict_eh_barcode
 
         # 1. Collect
@@ -171,7 +176,7 @@ class TestIntegration:
         gt.learn_T()
 
         # 3. Fixed point
-        god = gt.find_fixed_point(iters=100, tol=1e-5)
+        gt.find_fixed_point(iters=100, tol=1e-5)
 
         # 4. Predict
         pred = predict_eh_barcode(gt, (2.0, 1.0), "rect")
@@ -246,7 +251,7 @@ class TestValidationExperiment:
         assert r1.n_test == r2.n_test
         # Per-geometry results are deterministic
         assert len(r1.per_geometry) == len(r2.per_geometry)
-        for p1, p2 in zip(r1.per_geometry, r2.per_geometry):
+        for p1, p2 in zip(r1.per_geometry, r2.per_geometry, strict=True):
             assert p1["geometry"] == p2["geometry"]
             assert p1["e_error"] == p2["e_error"]
             assert p1["h_error"] == p2["h_error"]

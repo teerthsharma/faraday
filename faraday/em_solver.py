@@ -2,14 +2,36 @@
 # Attribution: Computational Faraday Tensor by Teerth Sharma (https://github.com/teerthsharma)
 #
 """
-faraday.em_solver — FDFD Cavity Solver for E and H Fields
+faraday.em_solver — FDFD Cavity Solver for E and H Fields.
 
-Computes TE and TM eigenmodes of a hollow PEC cavity.
-For TM modes:  ∇²E_z + k²E_z = 0
-For TE modes:  ∇²H_z + k²H_z = 0
+Computes TM eigenmodes of a 2D PEC cavity::
 
-Both E_z and H_z share the same eigenvalue k — they are COUPLED.
-This coupling is what the God Tensor learns to capture.
+    ∇²E_z + k² E_z = 0,     E_z|∂Ω = 0  (PEC, Dirichlet)
+
+The H-field is derived from Maxwell's curl equation::
+
+    H_x = (i / ω μ) ∂E_z/∂y,    H_y = -(i / ω μ) ∂E_z/∂x
+
+For benchmarking against analytic theory, the rectangular cavity has the
+closed-form eigenvalues
+
+.. math::
+
+   k_{mn}^2 = (m \\pi / w)^2 + (n \\pi / h)^2,
+   \\quad m, n = 1, 2, 3, \\ldots
+
+which we validate in ``tests/test_em_solver_analytic.py``.
+
+Implementation notes
+--------------------
+
+* The Laplacian is built fully vectorised via Kronecker products of the
+  1-D Dirichlet stencils, eliminating the previous O(N²) Python double-loop.
+* The H-field is computed with ``numpy.gradient`` rather than a per-cell
+  finite-difference loop — both vectorised and boundary-aware.
+* The eigensolver uses ``eigsh`` in **shift-invert mode** (``sigma=0``)
+  which targets the eigenvalues nearest zero (the physical low-frequency
+  cavity modes) and converges far faster than ``which="SM"``.
 """
 
 from __future__ import annotations
@@ -19,7 +41,10 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 import numpy as np
+from scipy.sparse import csr_matrix, diags, eye, kron
+from scipy.sparse.linalg import eigsh
 
+from faraday.exceptions import GeometryError, SolverError
 from faraday.logging import get_logger
 
 if TYPE_CHECKING:
@@ -29,6 +54,8 @@ log = get_logger(__name__)
 
 
 class CavityShape(Enum):
+    """Supported cavity shapes."""
+
     RECTANGULAR = "rectangular"
     CIRCULAR = "circular"
     PHOTONIC_CRYSTAL = "photonic_crystal"
@@ -38,74 +65,84 @@ class CavityShape(Enum):
 class CavityGeometry:
     """Cavity geometry descriptor.
 
-    Attributes
+    Parameters
     ----------
     shape : CavityShape
-        The shape of the cavity (rectangular, circular, or photonic_crystal).
+        The shape of the cavity.
     dims : tuple[float, ...]
-        Dimensions: ``(width, height)`` for rectangular, ``(radius,)`` for circular,
-        or ``(a, r_pillar)`` for photonic_crystal (a=lattice constant).
+        Dimensions: ``(width, height)`` for rectangular, ``(radius,)`` for
+        circular, or ``(a, r_pillar)`` for photonic_crystal where ``a`` is
+        the lattice constant.
     boundary_conditions : str
-        Boundary condition type. Only ``"pec"`` (perfect electric conductor) is
-        currently supported.
+        Only ``"pec"`` (perfect electric conductor) is currently supported.
     """
 
     shape: CavityShape
     dims: tuple[float, ...]
     boundary_conditions: str = "pec"
 
+    def __post_init__(self) -> None:
+        if self.boundary_conditions != "pec":
+            raise GeometryError(
+                f"only PEC boundary supported, got {self.boundary_conditions!r}",
+                bc=self.boundary_conditions,
+            )
+        if self.shape == CavityShape.RECTANGULAR:
+            if len(self.dims) != 2:
+                raise GeometryError("rectangular dims must be (w, h)", dims=self.dims)
+            w, h = self.dims
+            if w <= 0 or h <= 0:
+                raise GeometryError("w, h must be positive", w=w, h=h)
+        elif self.shape == CavityShape.CIRCULAR:
+            if len(self.dims) != 1:
+                raise GeometryError("circular dims must be (r,)", dims=self.dims)
+            (r,) = self.dims
+            if r <= 0:
+                raise GeometryError("r must be positive", r=r)
+        elif self.shape == CavityShape.PHOTONIC_CRYSTAL:
+            if len(self.dims) != 2:
+                raise GeometryError(
+                    "photonic_crystal dims must be (a, r_pillar)", dims=self.dims
+                )
+            a, r_p = self.dims
+            if a <= 0 or r_p <= 0:
+                raise GeometryError("a, r_p must be positive", a=a, r_p=r_p)
+
     def contains(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
-        """Return a boolean mask for points inside the cavity.
+        """Boolean mask of points inside the cavity.
 
-        Parameters
-        ----------
-        x, y : np.ndarray
-            Coordinate arrays. Can be 1D or 2D (meshgrid output).
-
-        Returns
-        -------
-        np.ndarray
-            Boolean array. For 1D ``x, y`` of the same length returns a 1D
-            mask (element-wise AND after broadcasting). For 2D meshgrid input
-            returns the corresponding 2D mask.
+        Both 1-D and 2-D ``(x, y)`` inputs are accepted; a meshgrid is the
+        common case for FDFD discretisation.
         """
         if self.shape == CavityShape.RECTANGULAR:
             w, h = self.dims
             return (np.abs(x) < w / 2) & (np.abs(y) < h / 2)
-        elif self.shape == CavityShape.CIRCULAR:
+        if self.shape == CavityShape.CIRCULAR:
             (r,) = self.dims
-            return (x**2 + y**2) < r**2
-        elif self.shape == CavityShape.PHOTONIC_CRYSTAL:
-            # dims = (lattice_a, pillar_radius)
+            return (x * x + y * y) < r * r
+        if self.shape == CavityShape.PHOTONIC_CRYSTAL:
             a, r_p = self.dims
-            # Outer boundary (box)
             w, h = a * 15, a * 10
             interior = (np.abs(x) < w / 2) & (np.abs(y) < h / 2)
-            
-            # Pillar lattice (Hexagonal)
-            # Find all (i, j) within bounds
-            pillars_mask = np.zeros_like(x, dtype=bool)
-            for i in range(-10, 11):
-                for j in range(-8, 9):
-                    # Hexagonal coordinates
-                    px = i * a + (j % 2) * (a / 2)
-                    py = j * a * (np.sqrt(3) / 2)
-                    
-                    # L3 Defect: skip the 3 central pillars on the j=0 row
-                    if j == 0 and i in [-1, 0, 1]:
-                        continue
-                        
-                    dist_sq = (x - px)**2 + (y - py)**2
-                    pillars_mask |= (dist_sq < r_p**2)
-            
-            # Interior is the space NOT occupied by pillars
-            return interior & (~pillars_mask)
-            
-        msg = f"Unsupported cavity shape: {self.shape}"
-        raise NotImplementedError(msg)
+            # Vectorised hexagonal pillar lattice with an L3 line-defect.
+            i_idx = np.arange(-10, 11)
+            j_idx = np.arange(-8, 9)
+            ii, jj = np.meshgrid(i_idx, j_idx, indexing="ij")
+            px = ii * a + (jj % 2) * (a / 2)
+            py = jj * a * (np.sqrt(3) / 2)
+            # L3 defect: skip the 3 central pillars on the j=0 row.
+            keep = ~((jj == 0) & (np.isin(ii, [-1, 0, 1])))
+            px = px[keep].ravel()
+            py = py[keep].ravel()
+            x_e = x[..., None]
+            y_e = y[..., None]
+            dist_sq = (x_e - px) ** 2 + (y_e - py) ** 2
+            pillars_mask = np.any(dist_sq < r_p * r_p, axis=-1)
+            return interior & ~pillars_mask
+        raise GeometryError(f"Unsupported cavity shape: {self.shape}", shape=self.shape)
 
     def interior_mask(self, X: np.ndarray, Y: np.ndarray) -> np.ndarray:
-        """Alias for :meth:`contains` with meshgrid inputs."""
+        """Alias for :meth:`contains` — useful with meshgrid inputs."""
         return self.contains(X, Y)
 
 
@@ -117,20 +154,7 @@ class CavityGeometry:
 def make_rectangular_grid(
     w: float, h: float, nx: int, ny: int
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Create a centred meshgrid for a rectangular cavity.
-
-    Parameters
-    ----------
-    w, h : float
-        Physical width and height of the cavity.
-    nx, ny : int
-        Number of grid points in the x and y directions.
-
-    Returns
-    -------
-    X, Y : np.ndarray
-        2D coordinate arrays of shape ``(ny, nx)``.
-    """
+    """Centred meshgrid of shape ``(ny, nx)``."""
     x = np.linspace(-w / 2, w / 2, nx)
     y = np.linspace(-h / 2, h / 2, ny)
     X, Y = np.meshgrid(x, y)
@@ -140,98 +164,95 @@ def make_rectangular_grid(
 def make_circular_grid(
     r: float, nx: int
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Create a centred meshgrid for a circular cavity.
-
-    Parameters
-    ----------
-    r : float
-        Physical radius of the cavity.
-    nx : int
-        Number of grid points along each axis (square grid).
-
-    Returns
-    -------
-    X, Y : np.ndarray
-        2D coordinate arrays of shape ``(nx, nx)``.
-    interior : np.ndarray
-        Boolean mask, ``True`` for points inside the circle.
-    """
+    """Centred meshgrid + interior mask for a circular cavity."""
     coord = np.linspace(-r, r, nx)
     X, Y = np.meshgrid(coord, coord)
-    interior = r**2 >= (X**2 + Y**2)
-    return X, Y, interior
+    return X, Y, r * r > X * X + Y * Y
 
 
 # ---------------------------------------------------------------------------
-# Laplacian builder
+# Vectorised Laplacian
 # ---------------------------------------------------------------------------
+
+# The Dirichlet (PEC) Laplacian on a regular ``ny × nx`` grid factors as
+#
+#     L = I_y ⊗ D_x  +  D_y ⊗ I_x ,
+#
+# where ``D_x`` and ``D_y`` are tridiagonal 1-D second-difference matrices
+# scaled by 1/dx² and 1/dy². Exterior cells are zeroed out by a row mask.
+
+_PENALTY = 1e6  # exterior diagonal value (so SM/sigma=0 ignores them)
+
+
+def _dirichlet_1d(n: int, h: float) -> csr_matrix:
+    """Return the ``n × n`` second-difference operator with Dirichlet BC.
+
+    Stencil = (1, -2, 1) / h². Boundary rows already implement the
+    Dirichlet condition because they only see one neighbour.
+    """
+    diagonals = [
+        np.full(n - 1, 1.0 / (h * h)),
+        np.full(n, -2.0 / (h * h)),
+        np.full(n - 1, 1.0 / (h * h)),
+    ]
+    return diags(diagonals, offsets=[-1, 0, 1], format="csr")
 
 
 def build_laplacian_2d(
     nx: int, ny: int, dx: float, dy: float, interior: np.ndarray
-) -> "csr_matrix":  # type: ignore[name-defined]
-    """Build the 5-point finite-difference Laplacian for the 2D Helmholtz problem.
+) -> csr_matrix:
+    """Build the 5-point Dirichlet Laplacian for a 2-D Helmholtz problem.
 
-    The Laplacian applies the discrete approximation:
-
-        ∇²f ≈ (f_{i+1,j} - 2f_{i,j} + f_{i-1,j}) / dx²
-             + (f_{i,j+1} - 2f_{i,j} + f_{i,j-1}) / dy²
-
-    Parameters
-    ----------
-    nx, ny : int
-        Grid dimensions.
-    dx, dy : float
-        Grid spacing in x and y.
-    interior : np.ndarray
-        Boolean mask, ``True`` for interior (cavity) points.
-
-    Returns
-    -------
-    np.ndarray
-        Sparse CSR matrix of shape ``(nx * ny, nx * ny)`` representing the Laplacian.
+    The exterior of ``interior`` is suppressed by a large diagonal penalty
+    so that the small-magnitude eigenpairs returned by ``eigsh`` belong to
+    the cavity interior. This is equivalent to a soft Dirichlet boundary
+    and converges to a hard Dirichlet boundary as the penalty grows.
     """
-    n = nx * ny
-    row_idx: list[int] = []
-    col_idx: list[int] = []
-    data: list[float] = []
+    if nx < 3 or ny < 3:
+        raise SolverError("nx, ny must be >= 3 for a 5-point stencil", nx=nx, ny=ny)
 
-    for j in range(ny):
-        for i in range(nx):
-            idx = i + j * nx
-            if not interior[j, i]:
-                row_idx.append(idx)
-                col_idx.append(idx)
-                data.append(-1e6)
-                continue
-            row_idx.append(idx)
-            col_idx.append(idx)
-            data.append(-2.0 / dx**2 - 2.0 / dy**2)
-            if i + 1 < nx:
-                row_idx.append(idx)
-                col_idx.append(idx + 1)
-                data.append(1.0 / dx**2)
-            if i - 1 >= 0:
-                row_idx.append(idx)
-                col_idx.append(idx - 1)
-                data.append(1.0 / dx**2)
-            if j + 1 < ny:
-                row_idx.append(idx)
-                col_idx.append(idx + nx)
-                data.append(1.0 / dy**2)
-            if j - 1 >= 0:
-                row_idx.append(idx)
-                col_idx.append(idx - nx)
-                data.append(1.0 / dy**2)
+    Dx = _dirichlet_1d(nx, dx)
+    Dy = _dirichlet_1d(ny, dy)
+    L = kron(eye(ny, format="csr"), Dx, format="csr") + kron(
+        Dy, eye(nx, format="csr"), format="csr"
+    )
 
-    from scipy.sparse import csr_matrix
-
-    return csr_matrix((data, (row_idx, col_idx)), shape=(n, n))  # type: ignore[return-value]
+    # Mask exterior with a large diagonal penalty.
+    exterior = (~interior).ravel()
+    if exterior.any():
+        # Zero out exterior rows/cols, then set diagonal penalty.
+        L = L.tolil()
+        ext_idx = np.flatnonzero(exterior)
+        L[ext_idx, :] = 0.0
+        L[:, ext_idx] = 0.0
+        for i in ext_idx:
+            L[i, i] = -_PENALTY
+        L = L.tocsr()
+    L.eliminate_zeros()
+    return L
 
 
 # ---------------------------------------------------------------------------
 # Main solver
 # ---------------------------------------------------------------------------
+
+
+def _curl_h_from_ez(
+    ez: np.ndarray, dx: float, dy: float, k: float
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Vectorised H-field magnitudes from a TM E_z mode.
+
+    Returns ``(|H_x|, |H_y|, |H|)``. For TM modes the magnitudes are real;
+    we drop the ``i / ω μ`` global phase as it does not affect topology.
+    """
+    omega = max(k, 1e-6)  # ω = c·k, c=1 in normalised units
+    # np.gradient is centred in the interior and one-sided at the edges,
+    # which is exactly what we want next to a Dirichlet boundary.
+    dez_dy, dez_dx = np.gradient(ez, dy, dx, edge_order=2)
+    hx = np.abs(dez_dy) / omega
+    hy = np.abs(dez_dx) / omega
+    h_mag = np.hypot(hx, hy)
+    return hx, hy, h_mag
 
 
 def solve_cavity_modes(
@@ -241,42 +262,32 @@ def solve_cavity_modes(
     num_modes: int = 12,
     seed: int | None = None,
 ) -> ModeData:
-    """Solve for E and H eigenmodes of the cavity.
-
-    Both share the same wave number *k* and spatial pattern structure —
-    they are linked by Maxwell's equations. We solve for E_z (TM modes)
-    and derive H_x, H_y (transverse components) from the curl relation.
-
-    .. math::
-
-        H_x = \\frac{{i}}{{\\omega\\mu}} \\frac{{\\partial E_z}}{{\\partial y}}
-        \\quad
-        H_y = -\\frac{{i}}{{\\omega\\mu}} \\frac{{\\partial E_z}}{{\\partial x}}
-
-    The Poynting vector magnitude ``|S| = |E| | |H|`` is used as the
-    physically meaningful H-field proxy for topological analysis.
+    """Solve TM eigenmodes of a PEC cavity.
 
     Parameters
     ----------
     geometry : CavityGeometry
-        The cavity shape and dimensions.
+        The cavity descriptor.
     nx, ny : int
-        Grid resolution.
+        Grid resolution. The grid is rectangular and contains ``nx * ny``
+        cells. For circular cavities ``ny = nx`` is enforced.
     num_modes : int
-        Maximum number of eigenmodes to compute.
+        Number of physical modes to return (after filtering spurious
+        zero-eigenvalue artefacts).
     seed : int, optional
-        Random seed for the ARPACK eigenvalue solver (eigsh). When None
-        (default), the solver uses unseeded random initialization which
-        produces slight eigenvalue variation across runs. Pass an explicit
-        seed for reproducible results. Internally converted to a
-        ``np.random.default_rng`` instance passed as ``eigsh(rng=...)``.
+        Seed for the ARPACK random initial vector. ``None`` uses unseeded
+        randomness which produces tiny run-to-run variation.
 
     Returns
     -------
     ModeData
-        Dict with keys: ``geometry``, ``dims``, ``nx``, ``ny``, ``num_modes_found``,
-        ``k_values``, ``e_modes``, ``h_modes``, ``s_modes``, ``X``, ``Y``, ``interior``.
+        Dict with keys ``geometry``, ``dims``, ``nx``, ``ny``,
+        ``num_modes_found``, ``k_values``, ``e_modes``, ``h_modes``,
+        ``s_modes``, ``X``, ``Y``, ``interior``.
     """
+    if num_modes < 1:
+        raise SolverError("num_modes must be >= 1", num_modes=num_modes)
+
     if geometry.shape == CavityShape.RECTANGULAR:
         w, h = geometry.dims
         X, Y = make_rectangular_grid(w, h, nx, ny)
@@ -285,19 +296,30 @@ def solve_cavity_modes(
         interior = geometry.contains(X, Y)
     elif geometry.shape == CavityShape.CIRCULAR:
         (r,) = geometry.dims
+        ny = nx  # square grid for circular cavities
         X, Y, interior = make_circular_grid(r, nx)
         dx = 2 * r / (nx - 1)
-        dy = 2 * r / (nx - 1)
+        dy = dx
     elif geometry.shape == CavityShape.PHOTONIC_CRYSTAL:
-        a, r_p = geometry.dims
+        a, _ = geometry.dims
         w, h = a * 15, a * 10
         X, Y = make_rectangular_grid(w, h, nx, ny)
         dx = w / (nx - 1)
         dy = h / (ny - 1)
         interior = geometry.contains(X, Y)
     else:
-        msg = f"Unsupported shape: {geometry.shape}"
-        raise NotImplementedError(msg)
+        raise GeometryError(
+            f"Unsupported shape: {geometry.shape}", shape=geometry.shape
+        )
+
+    n_interior = int(interior.sum())
+    if n_interior < 4:
+        raise SolverError(
+            "interior has too few points to support a stencil",
+            n_interior=n_interior,
+            nx=nx,
+            ny=ny,
+        )
 
     log.info(
         "building_laplacian",
@@ -305,100 +327,111 @@ def solve_cavity_modes(
         dims=geometry.dims,
         nx=nx,
         ny=ny,
-        interior_points=int(interior.sum()),
+        interior_points=n_interior,
     )
 
     L = build_laplacian_2d(nx, ny, dx, dy, interior)
-    n_interior = interior.sum()
 
-    from scipy.sparse.linalg import eigsh
+    # Shift-invert mode (sigma=0) targets eigenvalues nearest zero, which
+    # for the negative-semidefinite Laplacian are exactly the lowest-|k|
+    # physical cavity modes. Far faster than ``which="SM"``.
+    k_request = min(num_modes + 2, max(1, n_interior - 2))
+    rng = np.random.default_rng(seed) if seed is not None else None
+    v0 = rng.normal(size=L.shape[0]) if rng is not None else None
+    try:
+        k_raw, v = eigsh(
+            L,
+            k=k_request,
+            sigma=0.0,
+            which="LM",
+            tol=1e-8,
+            maxiter=20000,
+            v0=v0,
+        )
+    except Exception as exc:  # ARPACK failure: fall back to SM mode
+        log.warning("eigsh_shift_invert_failed", error=str(exc))
+        k_raw, v = eigsh(
+            L,
+            k=k_request,
+            which="SM",
+            tol=1e-6,
+            maxiter=20000,
+            v0=v0,
+        )
 
-    # "SM" finds the eigenvalues with the smallest magnitude.
-    # We set exterior points to have a huge eigenvalue (-1e6) so they are ignored.
-    # L is negative-semidefinite (eigenvalues = -k² ≤ 0).
-    # We find the fundamental (lowest-frequency) modes, which have the smallest
-    # non-zero k, perfectly matching the theoretical claims of the pipeline.
-    k_raw, v = eigsh(
-        L,
-        k=min(num_modes + 1, max(1, n_interior - 1)),
-        which="SM",
-        tol=1e-3,
-        maxiter=10000,
-        rng=np.random.default_rng(seed) if seed is not None else None,
-    )
+    # L is negative-semidefinite, eigenvalues = -k². We want k = sqrt(-λ).
     k_squared = -k_raw
-    k_values = np.sqrt(np.maximum(k_squared, 0))
+    k_values = np.sqrt(np.maximum(k_squared, 0.0))
 
-    # Filter spurious PEC Dirichlet zero-modes (k ≈ 0)
-    valid_idx = [i for i, kk in enumerate(k_values) if kk > 1e-6][:num_modes]
+    # Sort ascending (fundamental mode first) and drop spurious zero-modes
+    # plus PEC-penalty modes that appear with k² ≈ _PENALTY.
+    sort = np.argsort(k_values)
+    k_values = k_values[sort]
+    v = v[:, sort]
+    physical = (k_values > 1e-6) & (k_values < np.sqrt(_PENALTY) * 0.5)
+    valid_idx = np.flatnonzero(physical)[:num_modes].tolist()
+
+    if not valid_idx:
+        raise SolverError(
+            "no physical modes found — increase num_modes or grid resolution",
+            requested=num_modes,
+            k_values=k_values.tolist(),
+        )
 
     log.info(
         "eigsh_complete",
         requested_modes=num_modes,
         found_modes=len(valid_idx),
-        k_values=k_values[valid_idx][:3].tolist(),
+        k_values=[float(x) for x in k_values[valid_idx][:3]],
     )
 
     e_modes: dict[str, dict] = {}
     h_modes: dict[str, dict] = {}
     s_modes: dict[str, dict] = {}
 
+    interior_2d = interior  # already shape (ny, nx)
     for count, i in enumerate(valid_idx):
-        kk = k_values[i]
-        e_map = np.zeros((ny, nx))
-        hx_map = np.zeros((ny, nx))
-        hy_map = np.zeros((ny, nx))
-
-        for j in range(ny):
-            for ii in range(nx):
-                idx = ii + j * nx
-                if not interior[j, ii]:
-                    continue
-                e_val = v[idx, i]
-                e_map[j, ii] = e_val
-                # H-field from E-field via Maxwell's curl equations (finite-difference)
-                if 0 < ii < nx - 1 and 0 < j < ny - 1:
-                    dex_dy = (v[idx + nx, i] - v[idx - nx, i]) / (2 * dy)
-                    dex_dx = (v[idx + 1, i] - v[idx - 1, i]) / (2 * dx)
-                    C_SPEED_OF_LIGHT = 1.0
-                    omega = (kk * C_SPEED_OF_LIGHT) if kk > 1e-6 else 1.0
-                    hx_map[j, ii] = abs(dex_dy) / omega
-                    hy_map[j, ii] = abs(dex_dx) / omega
-
-        # Poynting vector magnitude: |S| = |E| | |H| (energy flux density)
-        h_mag = np.sqrt(hx_map**2 + hy_map**2)
+        kk = float(k_values[i])
+        e_map = v[:, i].reshape(ny, nx)
+        e_map = np.where(interior_2d, e_map, 0.0)
+        # Normalise sign so the mode has a definite orientation.
+        peak = e_map.flat[np.argmax(np.abs(e_map))]
+        if peak < 0:
+            e_map = -e_map
+        hx, hy, h_mag = _curl_h_from_ez(e_map, dx, dy, kk)
+        # H is non-zero on the boundary in general; no zeroing.
         s_map = np.abs(e_map) * h_mag
 
         e_modes[f"mode_{count}"] = {
-            "k": float(kk),
-            "wavelength": float(2 * np.pi / kk) if kk > 0 else float("inf"),
+            "k": kk,
+            "wavelength": float(2 * np.pi / kk),
             "field": e_map.tolist(),
             "nx": nx,
             "ny": ny,
         }
         h_modes[f"mode_{count}"] = {
-            "k": float(kk),
-            "wavelength": float(2 * np.pi / kk) if kk > 0 else float("inf"),
+            "k": kk,
+            "wavelength": float(2 * np.pi / kk),
             "field": h_mag.tolist(),
-            "hx": hx_map.tolist(),
-            "hy": hy_map.tolist(),
+            "hx": hx.tolist(),
+            "hy": hy.tolist(),
             "nx": nx,
             "ny": ny,
         }
         s_modes[f"mode_{count}"] = {
-            "k": float(kk),
+            "k": kk,
             "field": s_map.tolist(),
             "nx": nx,
             "ny": ny,
         }
 
-    result: ModeData = {  # type: ignore[valid-type]
+    result: ModeData = {  # type: ignore[valid-type, assignment]
         "geometry": str(geometry.shape.value),
         "dims": geometry.dims,
         "nx": nx,
         "ny": ny,
         "num_modes_found": len(e_modes),
-        "k_values": [float(kk) for kk in k_values[valid_idx]],
+        "k_values": [float(k_values[i]) for i in valid_idx],
         "e_modes": e_modes,
         "h_modes": h_modes,
         "s_modes": s_modes,
@@ -410,25 +443,44 @@ def solve_cavity_modes(
 
 
 # ---------------------------------------------------------------------------
-# Wave superposition
+# Analytic reference (used by tests)
+# ---------------------------------------------------------------------------
+
+
+def rectangular_analytic_k(
+    w: float, h: float, num_modes: int = 6
+) -> list[float]:
+    """Closed-form ascending eigen-wavenumbers of a rectangular PEC cavity.
+
+    For a TM_mn mode of a perfect rectangular cavity the eigenvalues are
+
+    .. math::
+
+       k_{mn}^2 = \\left(\\frac{m \\pi}{w}\\right)^2
+                 + \\left(\\frac{n \\pi}{h}\\right)^2,
+       \\quad m, n \\in \\{1, 2, 3, \\ldots\\}.
+
+    Returns the first ``num_modes`` values sorted ascending.
+    """
+    if w <= 0 or h <= 0 or num_modes < 1:
+        raise GeometryError("w,h>0 and num_modes>=1", w=w, h=h, num_modes=num_modes)
+    # Generate enough candidate (m,n) so we can pick the smallest num_modes.
+    span = max(4, int(np.ceil(np.sqrt(num_modes))) + 2)
+    ms = np.arange(1, span + 1)
+    ns = np.arange(1, span + 1)
+    mm, nn = np.meshgrid(ms, ns, indexing="ij")
+    ks = np.sqrt((mm * np.pi / w) ** 2 + (nn * np.pi / h) ** 2)
+    return sorted(ks.ravel().tolist())[:num_modes]
+
+
+# ---------------------------------------------------------------------------
+# Wave superposition (kept for backwards compatibility)
 # ---------------------------------------------------------------------------
 
 
 @dataclass
 class EMWave:
-    """A plane wave for injection into a cavity.
-
-    Attributes
-    ----------
-    amplitude : complex
-        Complex amplitude of the wave.
-    kx, ky : float
-        Wave numbers in x and y directions.
-    phase : float
-        Initial phase offset (radians).
-    omega : float
-        Angular frequency.
-    """
+    """A plane wave for injection into a cavity."""
 
     amplitude: complex
     kx: float
@@ -438,38 +490,19 @@ class EMWave:
 
     @property
     def k(self) -> float:
-        """Total wave number magnitude."""
-        return np.sqrt(self.kx**2 + self.ky**2)
+        """Total wave-number magnitude."""
+        return float(np.sqrt(self.kx**2 + self.ky**2))
 
     def field_at(
         self, x: np.ndarray, y: np.ndarray, t: float = 0.0
     ) -> np.ndarray:
-        """Evaluate the wave field at positions and time.
-
-        Parameters
-        ----------
-        x, y : np.ndarray
-            Spatial coordinates.
-        t : float
-            Time.
-
-        Returns
-        -------
-        np.ndarray
-            Complex field values.
-        """
+        """Evaluate the plane-wave field at positions and time."""
         phase = self.kx * x + self.ky * y - self.omega * t + self.phase
         return self.amplitude * np.exp(1j * phase)
 
 
 class WaveSuperposer:
-    """Superposes multiple EM waves and eigenmodes in a cavity.
-
-    ``E_total = Σ a_n * E_n`` (eigenmode expansion)
-    ``+ Σ w_m`` (custom plane wave injection)
-
-    Both E and H fields are superposed together.
-    """
+    """Superpose multiple plane waves and eigenmodes in a cavity."""
 
     def __init__(self, geometry: CavityGeometry, mode_data: dict) -> None:
         self.geometry = geometry
@@ -487,8 +520,7 @@ class WaveSuperposer:
         modes = self.mode_data["e_modes"]
         key = f"mode_{mode_idx}"
         if key not in modes:
-            msg = f"Mode {mode_idx} not found in e_modes"
-            raise KeyError(msg)
+            raise KeyError(f"Mode {mode_idx} not found in e_modes")
         self.active_mode_idx = mode_idx
         self.e_mode_amp = amplitude
         return self
@@ -500,8 +532,7 @@ class WaveSuperposer:
         modes = self.mode_data["h_modes"]
         key = f"mode_{mode_idx}"
         if key not in modes:
-            msg = f"Mode {mode_idx} not found in h_modes"
-            raise KeyError(msg)
+            raise KeyError(f"Mode {mode_idx} not found in h_modes")
         self.h_mode_amp = amplitude
         return self
 
@@ -540,33 +571,33 @@ class WaveSuperposer:
     def e_field_at(
         self, X: np.ndarray, Y: np.ndarray, t: float = 0.0
     ) -> np.ndarray:
-        """Compute total E-field at grid positions and time."""
+        """Total E-field at grid positions and time."""
         total = np.zeros_like(X, dtype=complex)
         if self.active_mode_idx is not None:
             mode_key = f"mode_{self.active_mode_idx}"
             e_map = np.array(self.mode_data["e_modes"][mode_key]["field"])
-            total += self.e_mode_amp * e_map
+            total = total + self.e_mode_amp * e_map
         for wave in self.e_waves:
-            total += wave.field_at(X, Y, t)
+            total = total + wave.field_at(X, Y, t)
         return total
 
     def h_field_at(
         self, X: np.ndarray, Y: np.ndarray, t: float = 0.0
     ) -> np.ndarray:
-        """Compute total H-field at grid positions and time."""
+        """Total H-field at grid positions and time."""
         total = np.zeros_like(X, dtype=complex)
-        if hasattr(self, "h_mode_amp"):
-            mode_key = f"mode_{self.active_mode_idx or 0}"
+        if self.active_mode_idx is not None:
+            mode_key = f"mode_{self.active_mode_idx}"
             h_map = np.array(self.mode_data["h_modes"][mode_key]["field"])
-            total += self.h_mode_amp * h_map
+            total = total + self.h_mode_amp * h_map
         for wave in self.h_waves:
-            total += wave.field_at(X, Y, t)
+            total = total + wave.field_at(X, Y, t)
         return total
 
     def poynting_vector(
         self, X: np.ndarray, Y: np.ndarray, t: float = 0.0
     ) -> np.ndarray:
-        """Poynting vector magnitude ``|S| = |E| | |H|``."""
+        """Poynting vector magnitude ``|S| = |E| · |H|``."""
         E = self.e_field_at(X, Y, t)
         H = self.h_field_at(X, Y, t)
         return np.abs(E) * np.abs(H)
