@@ -6,7 +6,6 @@ Tests for faraday core functionality.
 """
 
 import numpy as np
-import pytest
 
 
 class TestCavityGeometry:
@@ -37,8 +36,8 @@ class TestCavityGeometry:
         # Corner (1.5, 0.8) is outside both → False
         # Center (0, 0) is inside both → True
         assert mask.shape == (3, 4)
-        assert mask[1, 2] == True   # center
-        assert mask[0, 3] == False  # top-right corner outside
+        assert mask[1, 2]   # center inside
+        assert not mask[0, 3]  # top-right corner outside
 
     def test_circular_contains(self):
         from faraday import CavityGeometry, CavityShape
@@ -97,7 +96,7 @@ class TestEMSolver:
             assert np.isrealobj(field), f"{key} E-field should be real"
             # E-field should be zero at PEC boundary
             interior = np.array(result["interior"])
-            ny, nx = field.shape
+            _ny, _nx = field.shape
             assert np.allclose(field[~interior], 0.0), f"{key} should be zero outside"
 
     def test_h_field_from_e_via_curl(self):
@@ -134,7 +133,7 @@ class TestBarcode:
         assert points.shape[0] >= 1
 
     def test_compute_barcodes(self):
-        from faraday import field_to_pointcloud, compute_barcodes
+        from faraday import compute_barcodes, field_to_pointcloud
 
         np.random.seed(42)
         field = np.random.rand(30, 30)

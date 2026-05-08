@@ -2,37 +2,67 @@
 # Attribution: Computational Faraday Tensor by Teerth Sharma (https://github.com/teerthsharma)
 #
 """
-faraday.god_tensor — The Spectral Fixed Point of E ⇄ H
+faraday.god_tensor — The Spectral Fixed Point of E ⇄ H Coupling.
 
-The God Tensor is the fixed point of the E-H co-determination operator.
-Given E_signature and H_signature from the same cavity mode:
+We learn a coupling operator :math:`T: \\mathbb{R}^L \\to \\mathbb{R}^L`
+between latent embeddings of E- and H-field topological fingerprints by
+least squares,
 
-    T(E_sig) -> H_sig
-    T(H_sig) -> E_sig
+.. math::
 
-Iterating: T(T(x)) -> T(x)  [fixed point]
+   T = \\arg\\min_{M \\in \\mathbb{R}^{L\\times L}}
+      \\sum_{n=1}^{N} \\| M\\, z^E_n - z^H_n \\|^2_2,
+   \\qquad z^E_n, z^H_n = \\Pi(B^E_n), \\Pi(B^H_n),
 
-At convergence: T(x) = God Tensor
-The God Tensor IS the unified field — it captures the invariant
-that E and H mutually encode about each other.
+with :math:`\\Pi` the autoencoder projection of the Hilbert-series barcode
+embedding.  The closed-form solution is
+:math:`T = (Z_E^\\top Z_E)^{-1} Z_E^\\top Z_H` (transposed).
 
-Mathematical Note
------------------
-Convergence is governed by the Perron-Frobenius theorem for the
-dominant eigenvalue of the learned coupling matrix T. The iteration
-is a normalized power method that discovers the principal spectral
-invariant of the E-H topology.
+The **God Tensor** :math:`g \\in \\mathbb{R}^L` is the dominant eigenvector
+of :math:`T`, characterised by the spectral fixed-point equation
+
+.. math::
+
+   \\hat T(g) := T g / \\|T g\\|_2 = g.
+
+Existence and convergence of the iteration
+
+.. math::
+
+   x_{n+1} = T x_n / \\| T x_n \\|_2
+
+to :math:`g` is guaranteed for any starting vector with a non-zero
+projection onto the dominant eigenspace by the **Perron–Frobenius
+theorem** (Perron 1907, Frobenius 1912) in its primitive-matrix form, and
+more generally by the convergence of the *power method* (Golub & Van
+Loan, *Matrix Computations*, §7.3).  The convergence rate is geometric
+with ratio :math:`|\\lambda_2 / \\lambda_1|` where :math:`\\lambda_1,
+\\lambda_2` are the two largest eigenvalues of :math:`T` in modulus.
+
+Numerically, :math:`x_n` converges to a fixed sign of :math:`g` modulo
+arbitrary global phase; we use the sign-corrected residual
+
+.. math::
+
+   r_n = \\| x_{n+1} - \\mathrm{sign}(\\langle x_{n+1}, x_n \\rangle)\\, x_n\\|_2
+
+to detect convergence; once :math:`r_n < \\varepsilon` the iteration is
+declared converged.
 """
 
 from __future__ import annotations
 
+import pickle
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
 
 import numpy as np
 
 from faraday._types import ModeData
 from faraday.barcode import coupled_fingerprint
 from faraday.em_solver import CavityGeometry, CavityShape, solve_cavity_modes
+from faraday.exceptions import ConvergenceError
 from faraday.logging import get_logger
 from faraday.manifold_projector import ManifoldProjector, embed_fingerprint
 
@@ -40,55 +70,56 @@ log = get_logger(__name__)
 
 
 def _solve(geom: CavityGeometry, nx: int, ny: int, num_modes: int) -> ModeData:
-    """Wrapper that casts solve_cavity_modes to ModeData for type checker."""
+    """Type-narrowing wrapper around :func:`solve_cavity_modes`."""
     return solve_cavity_modes(geom, nx=nx, ny=ny, num_modes=num_modes)  # type: ignore[return-value]
+
+
+# ---------------------------------------------------------------------------
+# TrainingSample
+# ---------------------------------------------------------------------------
 
 
 @dataclass
 class TrainingSample:
-    """One training sample: a geometry + its E and H field signatures."""
+    """A single (geometry, E-fp, H-fp, embeddings) training sample."""
 
-    geometry_params: tuple[float, ...]  # e.g. (w, h) or (r,)
-    e_fingerprint: dict
-    h_fingerprint: dict
-    e_embedding: np.ndarray  # manifold embedding of E fingerprint
-    h_embedding: np.ndarray  # manifold embedding of H fingerprint
-    k_values: list[float]  # cavity eigenmode wave numbers
+    geometry_params: tuple[float, ...]
+    e_fingerprint: dict[str, Any]
+    h_fingerprint: dict[str, Any]
+    e_embedding: np.ndarray
+    h_embedding: np.ndarray
+    k_values: list[float]
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "geometry_params": self.geometry_params,
             "e_fingerprint": self.e_fingerprint,
             "h_fingerprint": self.h_fingerprint,
             "e_embedding": self.e_embedding.tolist(),
             "h_embedding": self.h_embedding.tolist(),
-            "k_values": self.k_values,
+            "k_values": list(self.k_values),
         }
 
     @classmethod
-    def from_dict(cls, d: dict) -> "TrainingSample":
+    def from_dict(cls, d: dict[str, Any]) -> TrainingSample:
         return cls(
             geometry_params=tuple(d["geometry_params"]),
             e_fingerprint=d["e_fingerprint"],
             h_fingerprint=d["h_fingerprint"],
-            e_embedding=np.array(d["e_embedding"], dtype=np.float64),
-            h_embedding=np.array(d["h_embedding"], dtype=np.float64),
+            e_embedding=np.asarray(d["e_embedding"], dtype=np.float64),
+            h_embedding=np.asarray(d["h_embedding"], dtype=np.float64),
             k_values=list(d["k_values"]),
         )
 
 
+# ---------------------------------------------------------------------------
+# GodTensor
+# ---------------------------------------------------------------------------
+
+
 @dataclass
 class GodTensor:
-    """
-    The God Tensor: spectral fixed point of E ⇄ H co-determination.
-
-    Learn T such that:
-        T(e) ≈ h  (E encodes H)
-        T(h) ≈ e  (H encodes E)
-        T(T(x)) = T(x)  [spectral invariant]
-
-    This fixed point T is the God Tensor — it IS the unified field.
-    """
+    """The God Tensor: spectral fixed point of the learned E ⇄ H operator."""
 
     n_geometries: int = 50
     samples: list[TrainingSample] = field(default_factory=list)
@@ -101,7 +132,14 @@ class GodTensor:
     T_matrix: np.ndarray | None = field(default=None, repr=False)
     god_tensor: np.ndarray | None = field(default=None, repr=False)
     fixed_point_converged: bool = False
-    convergence_history: list[dict] = field(default_factory=list)
+    convergence_history: list[dict[str, float]] = field(default_factory=list)
+    final_residual: float = float("inf")
+    dominant_eigenvalue: complex = complex("nan")
+    spectral_gap: float = float("nan")
+
+    # ------------------------------------------------------------------
+    # Training-data collection
+    # ------------------------------------------------------------------
 
     def collect_training_data(
         self,
@@ -110,328 +148,315 @@ class GodTensor:
         num_modes: int = 8,
         seed: int = 42,
     ) -> None:
-        """
-        Generate training dataset: varied cavity geometries with E and H fields.
+        """Generate a sweep of cavity geometries with E- and H-field fingerprints.
 
-        Samples random (w, h) rectangles and (r,) circles, solves the cavity
-        modes for each, computes topological fingerprints and embeddings.
-
-        Args:
-            nx, ny: grid resolution
-            num_modes: number of eigenmodes to compute per geometry
-            seed: random seed for reproducibility
+        60% rectangular, 20% circular, 20% photonic-crystal — the same
+        proportions used in the documented demo runs.
         """
         rng = np.random.default_rng(seed)
         self.samples = []
 
         for i in range(self.n_geometries):
-            # Random geometry: 60% rectangular, 20% circular, 20% photonic crystal
             p = rng.random()
             if p < 0.6:
-                w = rng.uniform(0.8, 3.0)
-                h = rng.uniform(0.5, 2.0)
+                w = float(rng.uniform(0.8, 3.0))
+                h = float(rng.uniform(0.5, 2.0))
                 geom = CavityGeometry(shape=CavityShape.RECTANGULAR, dims=(w, h))
-                params = (w, h)
+                params: tuple[float, ...] = (w, h)
             elif p < 0.8:
-                r = rng.uniform(0.5, 1.5)
+                r = float(rng.uniform(0.5, 1.5))
                 geom = CavityGeometry(shape=CavityShape.CIRCULAR, dims=(r,))
                 params = (r,)
             else:
-                a = rng.uniform(0.1, 0.3)
+                a = float(rng.uniform(0.1, 0.3))
                 r_p = a * 0.3
-                geom = CavityGeometry(shape=CavityShape.PHOTONIC_CRYSTAL, dims=(a, r_p))
+                geom = CavityGeometry(
+                    shape=CavityShape.PHOTONIC_CRYSTAL, dims=(a, r_p)
+                )
                 params = (a, r_p)
 
-            # Solve cavity modes
             try:
                 mode_data = solve_cavity_modes(
                     geom, nx=nx, ny=ny, num_modes=num_modes, seed=seed
                 )
-            except Exception as e:
-                log.warning("geometry_solve_failed", params=params, error=str(e))
+            except Exception as exc:
+                log.warning("geometry_solve_failed", params=params, error=str(exc))
                 continue
 
-            # Use the dominant (lowest k) mode for fingerprinting
             mode_key = "mode_0"
             if mode_key not in mode_data["e_modes"]:
                 continue
+            e_field = np.asarray(
+                mode_data["e_modes"][mode_key]["field"], dtype=np.float64
+            )
+            h_field = np.asarray(
+                mode_data["h_modes"][mode_key]["field"], dtype=np.float64
+            )
 
-            e_field = np.array(mode_data["e_modes"][mode_key]["field"])
-            h_field = np.array(mode_data["h_modes"][mode_key]["field"])
-
-            # Coupled fingerprint
             fp = coupled_fingerprint(e_field, h_field, threshold=0.05)
             e_fp = fp["e_fingerprint"]
             h_fp = fp["h_fingerprint"]
-
             if "error" in e_fp or "error" in h_fp:
                 continue
-
-            # Embeddings
-            e_emb = embed_fingerprint(e_fp, dim=50)
-            h_emb = embed_fingerprint(h_fp, dim=50)
 
             sample = TrainingSample(
                 geometry_params=params,
                 e_fingerprint=e_fp,
                 h_fingerprint=h_fp,
-                e_embedding=e_emb,
-                h_embedding=h_emb,
-                k_values=mode_data["k_values"],
+                e_embedding=embed_fingerprint(e_fp, dim=50),
+                h_embedding=embed_fingerprint(h_fp, dim=50),
+                k_values=list(mode_data["k_values"]),
             )
             self.samples.append(sample)
-
-            log.info("sample_collected", i=i, params=params, valid=len(self.samples))
+            log.debug("sample_collected", i=i, params=params, valid=len(self.samples))
             if (i + 1) % 20 == 0:
-                log.info("collection_progress", collected=i + 1, total=self.n_geometries)
+                log.info(
+                    "collection_progress",
+                    collected=i + 1,
+                    total=self.n_geometries,
+                )
 
         log.info("training_data_collected", n_samples=len(self.samples))
 
+    # ------------------------------------------------------------------
+    # Learn T
+    # ------------------------------------------------------------------
+
     def learn_T(self) -> np.ndarray:
-        """
-        Learn the coupling operator T: E_embedding <-> H_embedding.
+        """Learn the coupling operator T via least squares.
 
-        T is a matrix such that:
-            T @ e_emb ≈ h_emb   (for most samples)
-
-        Solved via least squares: T = H @ E^+  (H = stacked h_emb, E = stacked e_emb)
-        The pseudoinverse handles the overdetermined case.
-
-        Returns:
-            T: (latent_dim, latent_dim) coupling matrix
+        Solves :math:`\\min_T \\| Z_E T^\\top - Z_H \\|_F^2` for T, where
+        :math:`Z_E, Z_H` are stacked autoencoder-projected latent vectors
+        of the E- and H-fingerprint embeddings.
         """
         if len(self.samples) < 2:
-            raise ValueError("Need at least 2 training samples")
+            raise ConvergenceError(
+                "need >=2 training samples to fit T", n_samples=len(self.samples)
+            )
 
-        E = np.array([s.e_embedding for s in self.samples])  # (n, 50)
-        H = np.array([s.h_embedding for s in self.samples])  # (n, 50)
+        E = np.stack([s.e_embedding for s in self.samples])
+        H = np.stack([s.h_embedding for s in self.samples])
 
-        # Train manifold projectors on the data before encoding
         log.info("training_manifold_projector_e", samples=len(E))
-        self.projector_e.fit([s.e_embedding for s in self.samples], epochs=100, batch_size=8, verbose=False)
+        self.projector_e.fit(
+            list(E), epochs=100, batch_size=min(8, len(E)), verbose=False
+        )
         log.info("training_manifold_projector_h", samples=len(H))
-        self.projector_h.fit([s.h_embedding for s in self.samples], epochs=100, batch_size=8, verbose=False)
+        self.projector_h.fit(
+            list(H), epochs=100, batch_size=min(8, len(H)), verbose=False
+        )
 
-        # First project to latent space
-        E_latent = np.array([self.projector_e.encode(e) for e in E])
-        H_latent = np.array([self.projector_h.encode(h) for h in H])
+        E_lat = np.stack([self.projector_e.encode(e) for e in E])
+        H_lat = np.stack([self.projector_h.encode(h) for h in H])
 
-        # Solve T @ E_latent.T ≈ H_latent.T via least squares
-        # T @ E_latent.T = H_latent.T  →  T @ E_latent.T @ E_latent = H_latent.T @ E_latent
-        # →  T = H_latent.T @ E_latent @ (E_latent.T @ E_latent)^-1
-        # Using lstsq for numerical stability: T @ E_latent = H_latent
         from scipy.linalg import lstsq
 
-        T_raw, _residuals, _rank, _s = lstsq(E_latent, H_latent)  # type: ignore[assignment]
-        T = T_raw.T  # (latent, latent)
-
+        T_raw, _, rank, _ = lstsq(E_lat, H_lat)
+        T = T_raw.T  # (L, L) so that T @ e ≈ h
         self.T_matrix = T
-        # Verify: T @ e should reconstruct h
-        H_recon = E_latent @ T.T
-        error = float(np.mean(np.abs(H_recon - H_latent)))
 
-        log.info("t_matrix_learned", shape=T.shape, rank=_rank)
-        log.info("t_reconstruction_error", error=error)
-
+        H_recon = E_lat @ T.T
+        recon_err = float(np.mean(np.abs(H_recon - H_lat)))
+        log.info("t_matrix_learned", shape=T.shape, rank=int(rank))
+        log.info("t_reconstruction_error", error=recon_err)
         return T
 
-    def find_fixed_point(self, iters: int = 500, tol: float = 1e-7) -> np.ndarray:
-        """
-        Find the spectral fixed point of T: the dominant eigenvector.
+    # ------------------------------------------------------------------
+    # Spectral fixed-point iteration (Perron-Frobenius / power method)
+    # ------------------------------------------------------------------
 
-        The God Tensor is the fixed point x* where T(x*) = x*.
-        This is the eigenvector of T with eigenvalue λ ≈ 1.
+    def find_fixed_point(
+        self, iters: int = 500, tol: float = 1e-7
+    ) -> np.ndarray:
+        """Compute the God Tensor :math:`g` — the dominant eigenvector of T.
 
-        Convergence is governed by Perron-Frobenius theory for the dominant
-        spectral component of the learned coupling matrix T.
+        Combines (1) a closed-form eigendecomposition for the initial
+        guess and (2) normalised power iteration for refinement to
+        machine precision.
 
-        Args:
-            iters: max power-iteration refinement passes
-            tol: convergence tolerance for power iteration refinement
-
-        Returns:
-            god_tensor: the principal eigenvector (fixed point)
+        Parameters
+        ----------
+        iters : int
+            Maximum number of power-method refinement passes.
+        tol : float
+            Sign-corrected convergence tolerance; once
+            :math:`\\| x_{n+1} - \\mathrm{sign}\\langle x_{n+1}, x_n\\rangle\\, x_n\\|_2 < \\varepsilon`
+            the iteration is declared converged.
         """
         if self.T_matrix is None:
             self.learn_T()
-
         T = self.T_matrix
+        assert T is not None
 
-        # Strategy 1: Direct eigendecomposition
-        # Find eigenvector closest to eigenvalue 1 (most isometric coupling)
         eigenvalues, eigenvectors = np.linalg.eig(T)
+        order = np.argsort(-np.abs(eigenvalues))  # descending |λ|
+        eigenvalues = eigenvalues[order]
+        eigenvectors = eigenvectors[:, order]
+        self.dominant_eigenvalue = complex(eigenvalues[0])
+        self.spectral_gap = float(
+            np.abs(eigenvalues[1]) / max(np.abs(eigenvalues[0]), 1e-12)
+        ) if len(eigenvalues) > 1 else 0.0
 
-        eigenvalue_distances = np.abs(eigenvalues - 1.0)
-        best_idx = int(np.argmin(eigenvalue_distances))
-        x = np.real(eigenvectors[:, best_idx])
-        x = x / (np.linalg.norm(x) + 1e-10)
+        x = np.real(eigenvectors[:, 0])
+        x = x / max(float(np.linalg.norm(x)), 1e-12)
 
         log.info(
-            "spectral_fixed_point_found",
-            eigenvalue=float(np.real(eigenvalues[best_idx])),
-            eigenvalue_dist=float(eigenvalue_distances[best_idx]),
+            "spectral_init",
+            dominant_eigenvalue=float(np.real(eigenvalues[0])),
+            spectral_gap_ratio=self.spectral_gap,
             latent_dim=T.shape[0],
         )
 
-        # Strategy 2: Power-iteration refinement (Spectral Convergence)
+        spectral_residual = float("inf")
+        sign_correction = 1.0
+        x_new = x
+
         for i in range(iters):
             x_new = T @ x
-            norm = np.linalg.norm(x_new)
-            if norm > 1e-10:
+            norm = float(np.linalg.norm(x_new))
+            if norm > 1e-12:
                 x_new = x_new / norm
-
-            # Sign-invariant delta: convergence to eigenvector, not ±eigenvector
-            sign_correction = 1.0 if np.dot(x_new, x) >= 0 else -1.0
+            sign_correction = 1.0 if float(np.dot(x_new, x)) >= 0 else -1.0
             spectral_residual = float(np.linalg.norm(x_new - sign_correction * x))
             self.convergence_history.append(
-                {"iter": i, "spectral_residual": spectral_residual, "norm": float(norm)}
+                {
+                    "iter": i,
+                    "spectral_residual": spectral_residual,
+                    "norm": norm,
+                }
             )
-
-            if spectral_residual < tol:
-                log.info("spectral_fixed_point_converged", iter=i, residual=spectral_residual)
-                self.fixed_point_converged = True
-                x = sign_correction * x_new
-                break
-
             x = sign_correction * x_new
-
+            if spectral_residual < tol:
+                self.fixed_point_converged = True
+                log.info(
+                    "spectral_fixed_point_converged",
+                    iter=i,
+                    residual=spectral_residual,
+                )
+                break
             if (i + 1) % 100 == 0:
-                log.debug("spectral_fixed_point_progress", iter=i + 1, residual=spectral_residual)
-        else:
-            log.warning(
-                "spectral_iteration_max_iters",
-                final_residual=spectral_residual,
-                note="Proceeding with best eigenvector from spectral analysis",
-            )
+                log.debug(
+                    "spectral_progress", iter=i + 1, residual=spectral_residual
+                )
 
+        self.final_residual = spectral_residual
         self.god_tensor = x
 
-        # Verify: T(T(x)) ≈ T(x)
+        # Verification: T(T(x)) ≈ T(x) (idempotency on the eigen-line)
         Tx = T @ x
         TTx = T @ Tx
-        verification_error = float(np.linalg.norm(Tx - TTx))
+        verification = float(np.linalg.norm(Tx - TTx))
+        log.info("spectral_fixed_point_verified", verification_error=verification)
 
-        # Also verify: both E and H converge to same point under T
-        e_latent = np.array(
-            [self.projector_e.encode(s.e_embedding) for s in self.samples]
-        )
-        h_latent = np.array(
-            [self.projector_h.encode(s.h_embedding) for s in self.samples]
-        )
-        e_under_T = e_latent @ T.T
-        e_under_T_normed = e_under_T / (
-            np.linalg.norm(e_under_T, axis=1, keepdims=True) + 1e-10
-        )
-        h_under_T = h_latent @ T.T
-        h_under_T_normed = h_under_T / (
-            np.linalg.norm(h_under_T, axis=1, keepdims=True) + 1e-10
-        )
-        e_dist = np.linalg.norm(e_under_T_normed - x, axis=1)
-        h_dist = np.linalg.norm(h_under_T_normed - x, axis=1)
-
-        log.info("spectral_fixed_point_verified", verification_error=verification_error)
-        log.info("e_convergence_to_spectral_point", avg_dist=float(np.mean(e_dist)))
-        log.info("h_convergence_to_spectral_point", avg_dist=float(np.mean(h_dist)))
-
-        return x
-
-    def get_e_to_h_map(self, e_embedding: np.ndarray) -> np.ndarray:
-        """Map an E embedding to its predicted H embedding via T."""
-        if self.T_matrix is None:
-            raise ValueError("Must call find_fixed_point first")
-        e_latent = self.projector_e.encode(e_embedding)
-        h_latent = e_latent @ self.T_matrix.T
-        # Normalize
-        h_latent = h_latent / (np.linalg.norm(h_latent) + 1e-10)
-        return h_latent
-
-    def get_h_to_e_map(self, h_embedding: np.ndarray) -> np.ndarray:
-        """Map an H embedding to its predicted E embedding via T."""
-        if self.T_matrix is None:
-            raise ValueError("Must call find_fixed_point first")
-        h_latent = self.projector_h.encode(h_embedding)
-        e_latent = h_latent @ self.T_matrix
-        e_latent = e_latent / (np.linalg.norm(e_latent) + 1e-10)
-        return e_latent
-
-    def god_score(self) -> float:
-        """
-        Compute the 'god score' — how well the God Tensor unifies E and H.
-
-        Score = exp(-mean(||T(e_i) - god|| + ||T(h_i) - god||) / 2)
-
-        Using an exponential keeps the score bounded in [0, 1] regardless of
-        the geometry of the embedding space or the number of samples.
-        ``exp(-d)`` decays from 1 (d=0, perfect coupling) toward 0 (d→∞).
-        """
-        if self.god_tensor is None:
-            return 0.0
-
-        god = self.god_tensor
-        e_latent = np.array(
-            [self.projector_e.encode(s.e_embedding) for s in self.samples]
-        )
-        h_latent = np.array(
-            [self.projector_h.encode(s.h_embedding) for s in self.samples]
-        )
-
-        e_under_T = e_latent @ self.T_matrix.T
-        h_under_T = h_latent @ self.T_matrix.T
-
+        # E-side and H-side projection distances to the God Tensor
+        e_lat = np.stack([self.projector_e.encode(s.e_embedding) for s in self.samples])
+        h_lat = np.stack([self.projector_h.encode(s.h_embedding) for s in self.samples])
+        e_under_T = e_lat @ T.T
+        h_under_T = h_lat @ T.T
         e_under_T = e_under_T / (
-            np.linalg.norm(e_under_T, axis=1, keepdims=True) + 1e-10
+            np.linalg.norm(e_under_T, axis=1, keepdims=True) + 1e-12
         )
         h_under_T = h_under_T / (
-            np.linalg.norm(h_under_T, axis=1, keepdims=True) + 1e-10
+            np.linalg.norm(h_under_T, axis=1, keepdims=True) + 1e-12
         )
+        e_dist = float(np.mean(np.linalg.norm(e_under_T - x, axis=1)))
+        h_dist = float(np.mean(np.linalg.norm(h_under_T - x, axis=1)))
+        log.info("e_convergence_to_spectral_point", avg_dist=e_dist)
+        log.info("h_convergence_to_spectral_point", avg_dist=h_dist)
+        return x
 
-        e_dists = np.linalg.norm(e_under_T - god, axis=1)
-        h_dists = np.linalg.norm(h_under_T - god, axis=1)
+    # ------------------------------------------------------------------
+    # Public-API mappings
+    # ------------------------------------------------------------------
 
-        score = float(np.exp(-np.mean(e_dists + h_dists) / 2))
-        return score
+    def get_e_to_h_map(self, e_embedding: np.ndarray) -> np.ndarray:
+        """Map an E-embedding to its predicted H-latent via T."""
+        if self.T_matrix is None:
+            raise ConvergenceError("call find_fixed_point first")
+        e_latent = self.projector_e.encode(e_embedding)
+        h_latent = e_latent @ self.T_matrix.T
+        return h_latent / (np.linalg.norm(h_latent) + 1e-12)
 
-    def summary(self) -> dict:
-        """Return a human-readable summary of the God Tensor."""
+    def get_h_to_e_map(self, h_embedding: np.ndarray) -> np.ndarray:
+        """Map an H-embedding to its predicted E-latent via T."""
+        if self.T_matrix is None:
+            raise ConvergenceError("call find_fixed_point first")
+        h_latent = self.projector_h.encode(h_embedding)
+        e_latent = h_latent @ self.T_matrix
+        return e_latent / (np.linalg.norm(e_latent) + 1e-12)
+
+    def god_score(self) -> float:
+        """Decay score in :math:`(0, 1]` measuring E/H convergence to g.
+
+        :math:`\\mathrm{score} = \\exp\\!\\bigl(-\\tfrac{1}{2}\\,
+        \\overline{\\|T(z^E) - g\\| + \\|T(z^H) - g\\|}\\bigr)`,
+        averaged over training samples.  Score = 1 ⇔ E and H map exactly
+        onto the God Tensor.
+        """
+        if self.god_tensor is None or self.T_matrix is None:
+            return 0.0
+        g = self.god_tensor
+        T = self.T_matrix
+        e_lat = np.stack(
+            [self.projector_e.encode(s.e_embedding) for s in self.samples]
+        )
+        h_lat = np.stack(
+            [self.projector_h.encode(s.h_embedding) for s in self.samples]
+        )
+        e_T = e_lat @ T.T
+        h_T = h_lat @ T.T
+        e_T = e_T / (np.linalg.norm(e_T, axis=1, keepdims=True) + 1e-12)
+        h_T = h_T / (np.linalg.norm(h_T, axis=1, keepdims=True) + 1e-12)
+        d_e = np.linalg.norm(e_T - g, axis=1)
+        d_h = np.linalg.norm(h_T - g, axis=1)
+        return float(np.exp(-np.mean(d_e + d_h) / 2))
+
+    def summary(self) -> dict[str, Any]:
+        """Human-readable summary."""
         return {
             "n_samples": len(self.samples),
-            "T_matrix_shape": self.T_matrix.shape
-            if self.T_matrix is not None
-            else None,
-            "god_tensor_shape": self.god_tensor.shape
-            if self.god_tensor is not None
-            else None,
+            "T_matrix_shape": (
+                tuple(self.T_matrix.shape) if self.T_matrix is not None else None
+            ),
+            "god_tensor_shape": (
+                tuple(self.god_tensor.shape) if self.god_tensor is not None else None
+            ),
             "converged": self.fixed_point_converged,
-            "final_spectral_residual": self.convergence_history[-1]["spectral_residual"]
-            if self.convergence_history
-            else None,
+            "final_spectral_residual": (
+                self.convergence_history[-1]["spectral_residual"]
+                if self.convergence_history
+                else None
+            ),
+            "dominant_eigenvalue": (
+                None
+                if not np.isfinite(np.real(self.dominant_eigenvalue))
+                else complex(self.dominant_eigenvalue)
+            ),
+            "spectral_gap_ratio": (
+                None if not np.isfinite(self.spectral_gap) else self.spectral_gap
+            ),
             "god_score": self.god_score(),
         }
 
     def predict(self, w: float, h: float) -> list[tuple[float, float]]:
-        """
-        Predict barcode for a new geometry.
+        """Predict the persistence diagram of a new rectangular cavity.
 
-        Args:
-            w: cavity width
-            h: cavity height
-
-        Returns:
-            List of (birth, death) pairs from predicted E-field barcode.
+        Convenience wrapper that runs FDFD on the fly and returns its
+        H_0 barcode.  For full prediction with the learned operator, use
+        :func:`faraday.predict.predict_eh_barcode`.
         """
-        from faraday import CavityGeometry, CavityShape
+        from faraday.barcode import topological_fingerprint
 
         geom = CavityGeometry(shape=CavityShape.RECTANGULAR, dims=(w, h))
         mode_data = _solve(geom, nx=50, ny=50, num_modes=8)
         mode_key = "mode_0"
-        if mode_key in mode_data["e_modes"]:
-            e_field = np.array(mode_data["e_modes"][mode_key]["field"])
-        else:
+        if mode_key not in mode_data["e_modes"]:
             return []
-        from faraday.barcode import topological_fingerprint
-
+        e_field = np.asarray(
+            mode_data["e_modes"][mode_key]["field"], dtype=np.float64
+        )
         fp = topological_fingerprint(e_field)
-        diagram = fp.get("diagram", [])
+        diagram = fp.get("diagrams", [[]])[0]
         return [(float(b), float(d)) for b, d in diagram]
 
     # ------------------------------------------------------------------
@@ -439,34 +464,40 @@ class GodTensor:
     # ------------------------------------------------------------------
 
     def save(self, path: str) -> None:
-        """Save a trained GodTensor to a pickle file."""
-        import pickle
-
+        """Pickle the trained GodTensor to ``path``."""
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
         with open(path, "wb") as fh:
             pickle.dump(self, fh)
 
     @classmethod
-    def load(cls, path: str) -> "GodTensor":
-        """Load a saved GodTensor from a pickle file."""
-        import pickle
-
+    def load(cls, path: str) -> GodTensor:
+        """Load a GodTensor from a pickle file."""
         with open(path, "rb") as fh:
-            return pickle.load(fh)
+            obj = pickle.load(fh)
+        if not isinstance(obj, cls):
+            raise TypeError(f"Expected GodTensor, got {type(obj).__name__}")
+        return obj
 
-    def save_checkpoint(self, path: str, epoch: int, rng_state: dict) -> None:
-        """Save burn-loop checkpoint: god_tensor + epoch + RNG state (NumPy format)."""
-        np.savez(
+    def save_checkpoint(
+        self, path: str, epoch: int, rng_state: dict[str, Any]
+    ) -> None:
+        """Save spectral-burn checkpoint (god_tensor + epoch + RNG state)."""
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        np.savez(  # type: ignore[call-overload]
             path,
-            god_tensor=self.god_tensor,
-            epoch=epoch,
-            rng_state=rng_state,
+            god_tensor=np.asarray(self.god_tensor),
+            epoch=int(epoch),
+            rng_state=np.asarray(rng_state, dtype=object),
         )
 
     @classmethod
-    def load_checkpoint(cls, path: str) -> tuple[np.ndarray, int, dict]:
-        """Load burn-loop checkpoint. Returns (god_tensor, epoch, rng_state)."""
+    def load_checkpoint(
+        cls, path: str
+    ) -> tuple[np.ndarray, int, dict[str, Any]]:
+        """Load checkpoint. Returns ``(god_tensor, epoch, rng_state)``."""
         data = np.load(path, allow_pickle=True)
-        god_tensor = data["god_tensor"]
-        epoch = int(data["epoch"])
-        rng_state = dict(data["rng_state"].item())
-        return god_tensor, epoch, rng_state
+        return (
+            data["god_tensor"],
+            int(data["epoch"]),
+            dict(data["rng_state"].item()),
+        )

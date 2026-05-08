@@ -209,7 +209,7 @@ def _sub_config(name: str, data: dict[str, Any]) -> Any:
     cls: type = mapping.get(name)  # type: ignore[assignment]
     if cls is None:
         raise ConfigError(f"unknown config section: {name!r}")  # pragma: no cover
-    valid = set(f.name for f in cls.__dataclass_fields__.values())
+    valid = {f.name for f in cls.__dataclass_fields__.values()}  # type: ignore[attr-defined]
     unknown = set(data.keys()) - valid
     if unknown:
         raise ConfigError(

@@ -30,7 +30,8 @@ from __future__ import annotations
 import logging
 import os
 import sys
-from typing import TYPE_CHECKING, Callable, Iterable, Any, MutableMapping
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
