@@ -14,10 +14,11 @@ config-show — Display the active configuration.
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import click
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from faraday._types import ModeData
 
 from faraday.config import FaradayConfig
 
@@ -106,10 +107,11 @@ def solve(
     click.echo(f"[faraday solve] geometry=({width} x {height}), nx={nx_val}, ny={ny_val}, modes={n_modes_val}")
 
     modes = solve_cavity_modes(geometry, nx=nx_val, ny=ny_val, num_modes=n_modes_val)
+    mode_list = list(modes.values())[: int(n_modes_val)]
 
     click.echo(f"\nResonant frequencies (k²) for first {n_modes_val} modes:")
-    for i, m in enumerate(modes[:n_modes_val], 1):
-        click.echo(f"  mode {i}: k² = {m.eigenvalue:.6f}")
+    for i, m in enumerate(mode_list, 1):
+        click.echo(f"  mode {i}: k² = {m['eigenvalue']:.6f}")
 
 
 # ----------------------------------------------------------------------
@@ -208,7 +210,7 @@ def train(
     is_eager=True,
 )
 @click.pass_context
-def predict(
+def predict_cmd(
     ctx: click.Context,
     width: float,
     height: float,
@@ -379,7 +381,7 @@ def demo(config_path: str | None) -> None:
     $ faraday-demo
     """
     # Lazy import to avoid circular reference during package init
-    from faraday import demo as _demo_mod
+    from faraday import demo as _demo_mod  # type: ignore[attr-defined]
 
     _demo_mod.main()
 

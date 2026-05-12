@@ -162,9 +162,9 @@ def _average_fingerprints(
                     / total_weight
                 )
             )
-        result[dim] = avg_lts
+        result[dim] = avg_lts  # type: ignore[assignment]
 
-    result["diagrams"] = []
+    result["diagrams"] = []  # type: ignore[assignment]
     return result
 
 

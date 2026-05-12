@@ -20,7 +20,6 @@ Usage
 from __future__ import annotations
 
 import json
-import math
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -418,9 +417,9 @@ def run_suite(
     # ── Barcode ─────────────────────────────────────────────────────────
     mode_data: ModeData = solve_cavity_modes(
         geom_rect,
-        nx=cfg["nx"],  # type: ignore[index]
-        ny=cfg["ny"],  # type: ignore[index]
-        num_modes=cfg["num_modes"],  # type: ignore[index]
+        nx=int(cfg["nx"]),  # type: ignore[call-overload,index]
+        ny=int(cfg["ny"]),  # type: ignore[call-overload,index]
+        num_modes=int(cfg["num_modes"]),  # type: ignore[call-overload,index]
     )
     e_field = np.array(next(iter(mode_data["e_modes"].values()))["field"])
     h_field = np.array(next(iter(mode_data["h_modes"].values()))["field"])
@@ -474,7 +473,7 @@ def run_suite(
 
     total_duration = time.perf_counter() - t0_total
 
-    benchmark_report = BenchmarkReport(
+    benchmark_report: BenchmarkReport | tuple[BenchmarkReport, ValidationReport] = BenchmarkReport(
         suite=suite_name,
         timestamp=str(np.datetime64("now")),
         total_duration_s=total_duration,
@@ -487,12 +486,12 @@ def run_suite(
 
     if include_validation:
         val_report = run_validation_experiment(
-            n_total=cfg.get("n_geometries", 30),
-            nx=cfg["nx"],
-            ny=cfg["ny"],
-            num_modes=cfg["num_modes"],
+            n_total=int(cfg.get("n_geometries", 30)),  # type: ignore[call-overload,arg-type]
+            nx=int(cfg["nx"]),  # type: ignore[call-overload,arg-type]
+            ny=int(cfg["ny"]),  # type: ignore[call-overload,arg-type]
+            num_modes=int(cfg["num_modes"]),  # type: ignore[call-overload,arg-type]
         )
-        return benchmark_report, val_report
+        return benchmark_report, val_report  # type: ignore[return-value]
 
     return benchmark_report
 
@@ -585,7 +584,7 @@ def run_burn(
         ``resume_from`` is None) and loading (when ``resume_from`` is set).
     """
     import sys
-    import math as _math
+
     from faraday.logging import get_logger
 
     burn_log = get_logger("faraday.burn")
@@ -599,7 +598,7 @@ def run_burn(
         # ── Phase 2: Learn T matrix ─────────────────────────────────────────
         gt.learn_T()
         # Initialise god_tensor from dominant eigenvector of T
-        eigenvalues, eigenvectors = np.linalg.eig(gt.T_matrix)
+        eigenvalues, eigenvectors = np.linalg.eig(gt.T_matrix)  # type: ignore[arg-type]  # type: ignore[arg-type]
         dists = np.abs(eigenvalues - 1.0)
         best_idx = int(np.argmin(dists))
         god_tensor = np.real(eigenvectors[:, best_idx])
@@ -609,12 +608,12 @@ def run_burn(
         start_epoch = 0
     else:
         # Load checkpoint: restore god_tensor, epoch, RNG state
-        god_tensor, start_epoch, rng_state = GodTensor.load_checkpoint(checkpoint_path)
+        god_tensor, start_epoch, rng_state = GodTensor.load_checkpoint(checkpoint_path)  # type: ignore[arg-type]
         # Reconstruct gt for Betti computation (need samples + T + projectors)
         # We reload from the full GodTensor pickle (the full object, not just npz)
-        gt_path = checkpoint_path.replace(".npz", "_gt.pkl")
+        gt_path = str(checkpoint_path).replace(".npz", "_gt.pkl")
         try:
-            gt = GodTensor.load(gt_path)
+            gt = GodTensor.load(gt_path)  # type: ignore[arg-type]
         except FileNotFoundError:
             burn_log.error("checkpoint_gt_not_found", path=gt_path)
             sys.exit(1)
@@ -648,10 +647,10 @@ def run_burn(
         # a proxy for betti_0/1/2 errors — stable and differentiable.
         # Reference betti values are the mean of the training set.
         e_latent = np.array([gt.projector_e.encode(s.e_embedding) for s in gt.samples])
-        h_latent = np.array([gt.projector_h.encode(s.h_embedding) for s in gt.samples])
+        _ = np.array([gt.projector_h.encode(s.h_embedding) for s in gt.samples])
 
         # Residual after one T application
-        e_under_T = e_latent @ gt.T_matrix.T
+        e_under_T = e_latent @ gt.T_matrix.T  # type: ignore[union-attr]
         e_under_T_n = e_under_T / (np.linalg.norm(e_under_T, axis=1, keepdims=True) + 1e-10)
 
         # Compute per-sample "convergence signature" — normalised dot product
@@ -695,9 +694,9 @@ def run_burn(
         # Save checkpoint every 10k epochs
         if checkpoint_path is not None and epoch % 10_000 == 0:
             gt.god_tensor = x
-            rng_state = rng.bit_generator.state
+            rng_state = rng.bit_generator.state  # type: ignore[assignment]
             gt.save_checkpoint(checkpoint_path, epoch, rng_state)
-            gt.save(checkpoint_path.replace(".npz", "_gt.pkl"))
+            gt.save(str(checkpoint_path).replace(".npz", "_gt.pkl"))  # type: ignore[arg-type]
             burn_log.info("checkpoint_saved", epoch=epoch, path=checkpoint_path)
 
     burn_log.info("burn_complete", epochs=epochs)

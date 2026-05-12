@@ -16,13 +16,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from faraday.logging import get_logger
 
 if TYPE_CHECKING:
+    from scipy.sparse import csr_matrix
+
     from faraday._types import ModeData
 
 log = get_logger(__name__)
@@ -141,7 +143,7 @@ def make_circular_grid(
 
 def build_laplacian_2d(
     nx: int, ny: int, dx: float, dy: float, interior: np.ndarray
-) -> "csr_matrix":  # type: ignore[name-defined]
+) -> csr_matrix:  # type: ignore[name-defined]
     """Build the 5-point finite-difference Laplacian for the 2D Helmholtz problem.
 
     The Laplacian applies the discrete approximation:
@@ -357,7 +359,7 @@ def solve_cavity_modes(
             "ny": ny,
         }
 
-    result: ModeData = {  # type: ignore[valid-type]
+    result: dict[str, Any] = {  # type: ignore[assignment]
         "geometry": str(geometry.shape.value),
         "dims": geometry.dims,
         "nx": nx,
@@ -371,7 +373,7 @@ def solve_cavity_modes(
         "Y": Y.tolist(),
         "interior": interior.tolist(),
     }
-    return result
+    return result  # type: ignore[return-value]
 
 
 # ---------------------------------------------------------------------------

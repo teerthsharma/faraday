@@ -66,7 +66,7 @@ class TrainingSample:
         }
 
     @classmethod
-    def from_dict(cls, d: dict) -> "TrainingSample":
+    def from_dict(cls, d: dict) -> TrainingSample:
         return cls(
             geometry_params=tuple(d["geometry_params"]),
             e_fingerprint=d["e_fingerprint"],
@@ -134,7 +134,7 @@ class GodTensor:
             else:
                 r = rng.uniform(0.5, 1.5)
                 geom = CavityGeometry(shape=CavityShape.CIRCULAR, dims=(r,))
-                params = (r,)
+                params = (r,)  # type: ignore[assignment]  # type: ignore[assignment]
 
             # Solve cavity modes
             try:
@@ -256,10 +256,11 @@ class GodTensor:
             self.learn_T()
 
         T = self.T_matrix
+        assert T is not None
 
         # Strategy 1: direct eigendecomposition
         # Find eigenvector closest to eigenvalue 1 via Rayleigh quotient
-        eigenvalues, eigenvectors = np.linalg.eig(T)
+        eigenvalues, eigenvectors = np.linalg.eig(T)  # type: ignore[arg-type]  # type: ignore[arg-type]
 
         # Rayleigh quotient of each eigenvector for eigenvalue 1
         # r_i = (x_i^T T x_i) / (x_i^T x_i)  should equal λ_i
@@ -273,7 +274,7 @@ class GodTensor:
             "fixed_point_eigenvector_found",
             eigenvalue=float(np.real(eigenvalues[best_idx])),
             eigenvalue_dist=float(eigenvalue_distances[best_idx]),
-            latent_dim=T.shape[0],
+            latent_dim=T.shape[0],  # type: ignore[union-attr]
         )
 
         # Strategy 2: power-iteration refinement (for numeric stability)
@@ -321,11 +322,11 @@ class GodTensor:
         h_latent = np.array(
             [self.projector_h.encode(s.h_embedding) for s in self.samples]
         )
-        e_under_T = e_latent @ T.T
+        e_under_T = e_latent @ T.T  # type: ignore[union-attr]
         e_under_T_normed = e_under_T / (
             np.linalg.norm(e_under_T, axis=1, keepdims=True) + 1e-10
         )
-        h_under_T = h_latent @ T.T
+        h_under_T = h_latent @ T.T  # type: ignore[union-attr]
         h_under_T_normed = h_under_T / (
             np.linalg.norm(h_under_T, axis=1, keepdims=True) + 1e-10
         )
@@ -378,8 +379,8 @@ class GodTensor:
             [self.projector_h.encode(s.h_embedding) for s in self.samples]
         )
 
-        e_under_T = e_latent @ self.T_matrix.T
-        h_under_T = h_latent @ self.T_matrix.T
+        e_under_T = e_latent @ self.T_matrix.T  # type: ignore[union-attr]
+        h_under_T = h_latent @ self.T_matrix.T  # type: ignore[union-attr]
 
         e_under_T = e_under_T / (
             np.linalg.norm(e_under_T, axis=1, keepdims=True) + 1e-10
@@ -449,7 +450,7 @@ class GodTensor:
             pickle.dump(self, fh)
 
     @classmethod
-    def load(cls, path: str) -> "GodTensor":
+    def load(cls, path: str) -> GodTensor:
         """Load a saved GodTensor from a pickle file."""
         import pickle
 
@@ -460,9 +461,9 @@ class GodTensor:
         """Save burn-loop checkpoint: god_tensor + epoch + RNG state (NumPy format)."""
         np.savez(
             path,
-            god_tensor=self.god_tensor,
+            god_tensor=self.god_tensor,  # type: ignore[arg-type]
             epoch=epoch,
-            rng_state=rng_state,
+            rng_state=rng_state,  # type: ignore[arg-type]
         )
 
     @classmethod

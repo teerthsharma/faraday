@@ -101,6 +101,7 @@ def _git_runner(git_dir: Path):
 
 import hashlib
 
+
 class LedgerWriter:
     """
     Appends rows to transcript.csv and convergence_log.jsonl.
@@ -126,7 +127,7 @@ class LedgerWriter:
         if csv_path.exists() and skip_until > 0:
             try:
                 # Read the last line of the CSV to get the previous hash
-                with open(csv_path, "r", newline="") as fh:
+                with open(csv_path, newline="") as fh:
                     lines = fh.readlines()
                     if len(lines) > 1:
                         last_line = lines[-1].strip().split(",")
@@ -264,7 +265,7 @@ def _fmt(val: object) -> str:
     if val is None or (isinstance(val, float) and math.isnan(val)):
         return "NaN"
     try:
-        return f"{float(val):.6g}"
+        return f"{float(val):.6g}"  # type: ignore[arg-type]
     except Exception:
         return str(val)
 
@@ -540,9 +541,9 @@ def run_daemon(
     # ── Build subprocess command ─────────────────────────────────────────
     # checkpoint_path is the actual file path to load (resume) or create (fresh)
     if ckpt_path is not None:
-        cp = ckpt_path
+        cp_path: str = ckpt_path
     else:
-        cp = str(CHECKPOINT_DIR / "burn_checkpoint.npz")
+        cp_path = str(CHECKPOINT_DIR / "burn_checkpoint.npz")
 
     cmd = [
         sys.executable, "-m", "faraday.benchmarking",
@@ -553,20 +554,20 @@ def run_daemon(
         "--ny",         str(ny),
         "--num-modes",  str(num_modes),
         "--seed",       str(seed),
-        "--checkpoint-path", cp,
+        "--checkpoint-path", cp_path,
     ]
     if resume_from is not None:
-        cmd += ["--resume-from", str(resume_from)]
+        cmd += ["--resume-from", str(cp_path)]
     # Force JSON logging on the subprocess so we get clean parseable lines
     env = {**os.environ, "FARADAY_LOG_FORMAT": "json"}
 
     print(
-        f"[Daemon] {_now_iso()}  spawning  {' '.join(cmd)}",
+        f"[Daemon] {_now_iso()}  spawning  {' '.join(cmd)}",  # type: ignore[arg-type]
         flush=True,
     )
 
     proc = subprocess.Popen(
-        cmd,
+        cmd,  # type: ignore[arg-type]
         stdout = subprocess.PIPE,
         stderr = subprocess.PIPE,
         env    = env,
@@ -574,7 +575,6 @@ def run_daemon(
     )
 
     # ── I/O threads ──────────────────────────────────────────────────────
-    import threading
     parsed_records: list[dict] = []
     latest_telemetry: dict = {}
 
