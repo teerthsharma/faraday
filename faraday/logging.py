@@ -67,7 +67,7 @@ def _configure_structlog() -> None:
     else:
         processors.append(structlog.dev.ConsoleRenderer())
 
-    structlog.configure(  # type: ignore[arg-type]
+    structlog.configure(
         processors=processors,
         wrapper_class=structlog.stdlib.BoundLogger,
         context_class=dict,
@@ -85,20 +85,17 @@ _configure_structlog()
 
 def get_logger(name: str) -> structlog.stdlib.BoundLogger:
     """
-    Get a structured logger for the given module name.
+    Get a structlog logger for ``name``.
 
-    Parameters
-    ----------
-    name : str
-        The logger name — typically ``__name__`` of the calling module.
-        This appears in log output as the module/component identifier.
+    The logger is configured once at import time via ``_configure_structlog()``.
+    All messages are written to stderr and rendered as:
 
-    Returns
-    -------
-    BoundLogger
-        A structlog bound logger. Supports ``.info()``, ``.warning()``,
-        ``.error()``, ``.debug()`` etc. with keyword arguments for
-        structured fields.
+    - JSON (when ``FARADAY_LOG_FORMAT=json``)
+    - Console output (otherwise)
+
+    Log methods accept arbitrary keyword arguments that become structured
+    fields.  Use ``.error()``, ``.debug()`` etc. with keyword arguments for
+    structured fields.
 
     Example
     -------
@@ -106,7 +103,7 @@ def get_logger(name: str) -> structlog.stdlib.BoundLogger:
     >>> log = get_logger(__name__)
     >>> log.info("batch_processed", n=42, elapsed_s=1.23)
     """
-    return structlog.get_logger(name)
+    return structlog.get_logger(name)  # type: ignore[no-any-return]
 
 
 def set_log_level(level: str) -> None:

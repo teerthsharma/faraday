@@ -27,6 +27,7 @@ Usage
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 
@@ -49,8 +50,8 @@ class TrainingSample:
     """One training sample: a geometry + its E and H field signatures."""
 
     geometry_params: tuple[float, ...]  # e.g. (w, h) or (r,)
-    e_fingerprint: dict
-    h_fingerprint: dict
+    e_fingerprint: dict[str, Any]
+    h_fingerprint: dict[str, Any]
     e_embedding: np.ndarray  # manifold embedding of E fingerprint
     h_embedding: np.ndarray  # manifold embedding of H fingerprint
     k_values: list[float]  # cavity eigenmode wave numbers

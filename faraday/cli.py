@@ -14,11 +14,12 @@ config-show — Display the active configuration.
 
 from __future__ import annotations
 
-import click
 from typing import TYPE_CHECKING
 
+import click
+
 if TYPE_CHECKING:
-    from faraday._types import ModeData
+    pass
 
 from faraday.config import FaradayConfig
 

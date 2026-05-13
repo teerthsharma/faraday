@@ -15,7 +15,9 @@ Usage
 
 from __future__ import annotations
 
+import contextlib
 import csv
+import hashlib
 import json
 import math
 import os
@@ -86,7 +88,7 @@ def _git_runner(git_dir: Path):
         if token:
             env["GITHUB_TOKEN"] = token
         return subprocess.run(
-            ["git", "-C", str(git_dir)] + args,
+            ["git", "-C", str(git_dir), *args],
             capture_output=True,
             text=True,
             check=check,
@@ -98,9 +100,6 @@ def _git_runner(git_dir: Path):
 # ---------------------------------------------------------------------------
 # Ledger writer — append-only, thread-safe via file.seek
 # ---------------------------------------------------------------------------
-
-import hashlib
-
 
 class LedgerWriter:
     """
@@ -149,8 +148,8 @@ class LedgerWriter:
                 writer.writeheader()
 
         # (Re)open handles — kept for the lifetime of the object
-        self._csv_fh: TextIO   = open(csv_path, "a", newline="")
-        self._jsonl_fh: TextIO = open(jsonl_path, "a")
+        self._csv_fh: TextIO   = open(csv_path, "a", newline="")  # noqa: SIM115
+        self._jsonl_fh: TextIO = open(jsonl_path, "a")  # noqa: SIM115
 
         self._csv_writer = csv.DictWriter(
             self._csv_fh,
@@ -243,7 +242,7 @@ class GitPulse:
         rel_paths = [str(p.relative_to(self._repo_dir)) for p in self._paths]
 
         try:
-            self._git(["add"] + rel_paths)
+            self._git(["add", *rel_paths])
             self._git(["commit", "-m", msg])
             self._git(["push"])
             self._last_commit_epoch = current_epoch
@@ -280,7 +279,7 @@ class DivergenceMonitor:
 
     Halts if:
       • banach_loss becomes NaN
-      • banach_loss exceeds ``spike_threshold × window_avg``
+      • banach_loss exceeds ``spike_threshold * window_avg``
     """
 
     def __init__(
@@ -320,7 +319,7 @@ class DivergenceMonitor:
         # ── Spike trap ─────────────────────────────────────────────────
         # Fire only when we have a genuine divergence: the baseline must be
         # meaningfully non-zero (avg > 1e-7) AND the new value must exceed
-        # spike_threshold × that baseline.
+        # spike_threshold * that baseline.
         # This dual guard prevents false halts when banach_loss has already
         # converged to numerical noise (typically 1e-9 to 1e-6 range).
         if len(self._prev_window) == self._window:
@@ -330,7 +329,7 @@ class DivergenceMonitor:
                 self._halt_reason = (
                     f"Spike halt at epoch {epoch}: "
                     f"banach_loss={banach_loss:.6g} exceeds "
-                    f"{self._spike_threshold}× window-avg={avg:.6g}"
+                    f"{self._spike_threshold}* window-avg={avg:.6g}"
                 )
 
     @property
@@ -625,7 +624,7 @@ def run_daemon(
     reader.start()
 
     # ── Main loop: wait for subprocess to finish or halt ─────────────────
-    halt_flag = Event()
+    Event()
 
     def poll_stderr():
         """Consume stderr to prevent pipe deadlock."""
@@ -653,10 +652,8 @@ def run_daemon(
                 flush=True,
             )
             # SIGKILL the child
-            try:
+            with contextlib.suppress(ProcessLookupError):
                 proc.kill()
-            except ProcessLookupError:
-                pass
             break
         time.sleep(0.1)
 
