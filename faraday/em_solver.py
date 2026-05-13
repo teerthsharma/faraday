@@ -278,6 +278,7 @@ def solve_cavity_modes(
 
     L = build_laplacian_2d(nx, ny, dx, dy, interior)
     n_interior = interior.sum()
+    n_total = L.shape[0]
 
     from scipy.sparse.linalg import eigsh
 
@@ -293,7 +294,7 @@ def solve_cavity_modes(
     # versions too.
     if seed is not None:
         rng = np.random.default_rng(seed)
-        v0 = rng.random(n_interior)
+        v0 = rng.random(n_total)
     else:
         v0 = None
 
