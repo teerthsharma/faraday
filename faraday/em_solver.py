@@ -242,8 +242,9 @@ def solve_cavity_modes(
         Random seed for the ARPACK eigenvalue solver (eigsh). When None
         (default), the solver uses unseeded random initialization which
         produces slight eigenvalue variation across runs. Pass an explicit
-        seed for reproducible results. Internally converted to a
-        ``np.random.default_rng`` instance passed as ``eigsh(rng=...)``.
+        seed for reproducible results. Internally a random initial guess
+        vector is generated from the seed and passed via the ``v0``
+        parameter of ``eigsh``.
 
     Returns
     -------
@@ -285,13 +286,24 @@ def solve_cavity_modes(
     # L is negative-semidefinite (eigenvalues = -k² ≤ 0).
     # We find the fundamental (lowest-frequency) modes, which have the smallest
     # non-zero k, perfectly matching the theoretical claims of the pipeline.
+    #
+    # For reproducibility, we seed the ARPACK iteration by providing a random
+    # initial guess via the ``v0`` parameter.  This is equivalent to the
+    # ``rng`` parameter (introduced in scipy 1.16) but works on older scipy
+    # versions too.
+    if seed is not None:
+        rng = np.random.default_rng(seed)
+        v0 = rng.random(n_interior)
+    else:
+        v0 = None
+
     k_raw, v = eigsh(
         L,
         k=min(num_modes + 1, max(1, n_interior - 1)),
         which="SM",
         tol=1e-3,
         maxiter=10000,
-        rng=np.random.default_rng(seed) if seed is not None else None,
+        v0=v0,
     )
     k_squared = -k_raw
     k_values = np.sqrt(np.maximum(k_squared, 0))
