@@ -229,7 +229,7 @@ class ManifoldProjector:
         mse = float(np.mean((x - x_recon) ** 2))
         return mse
 
-    def project(self, barcode_or_fingerprint) -> np.ndarray:
+    def project(self, barcode_or_fingerprint: list[tuple[float, float]] | dict) -> np.ndarray:
         """
         Project raw barcode or fingerprint to latent space.
 
