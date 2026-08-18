@@ -1,0 +1,26 @@
+{
+  "title": "Faraday: a computational Faraday tensor for E-cross-H field coupling",
+  "description": "<p>Faraday learns a reduced-order topological operator on FDFD-derived electromagnetic fingerprints: a Banach fixed-point coupling tensor that converges to machine epsilon. The method recovers the unified E-cross-H field coupling by topology-fixed-point projection rather than by direct solution of the full field problem.</p>",
+  "upload_type": "software",
+  "access_right": "open",
+  "license": "other-open",
+  "creators": [
+    { "name": "Sharma, Teerth" }
+  ],
+  "keywords": [
+    "computational electromagnetics",
+    "FDFD",
+    "Faraday tensor",
+    "reduced-order modelling",
+    "Banach fixed point",
+    "computational topology",
+    "scientific machine learning"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/teerthsharma/faraday",
+      "relation": "isSupplementTo",
+      "scheme": "url"
+    }
+  ]
+}
