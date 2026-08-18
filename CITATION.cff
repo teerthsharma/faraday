@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata below."
+type: software
+title: "Faraday: a computational Faraday tensor for E-cross-H field coupling"
+abstract: >-
+  Faraday learns a reduced-order topological operator on FDFD-derived
+  electromagnetic fingerprints: a Banach fixed-point coupling tensor that
+  converges to machine epsilon. The method recovers the unified E-cross-H
+  field coupling by topology-fixed-point projection rather than by direct
+  solution of the full field problem.
+authors:
+  - family-names: Sharma
+    given-names: Teerth
+    email: teerths57@gmail.com
+version: 0.1.0
+date-released: 2026-08-18
+url: "https://github.com/teerthsharma/faraday"
+repository-code: "https://github.com/teerthsharma/faraday"
+license-url: "https://github.com/teerthsharma/faraday/blob/main/LICENSE"
+keywords:
+  - computational electromagnetics
+  - FDFD
+  - Faraday tensor
+  - reduced-order modelling
+  - Banach fixed point
+  - computational topology
+  - scientific machine learning
