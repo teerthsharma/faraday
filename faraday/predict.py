@@ -14,13 +14,11 @@ then project back to barcode space for visualization.
 
 from __future__ import annotations
 
-import math
-
 import numpy as np
 
 from faraday.barcode import coupled_fingerprint
 from faraday.em_solver import CavityGeometry, CavityShape, solve_cavity_modes
-from faraday.god_tensor import GodTensor
+from faraday.god_tensor import GodTensor, sign_invariant_distance
 from faraday.logging import get_logger
 
 log = get_logger(__name__)
@@ -54,51 +52,61 @@ def predict_eh_barcode(
         god_tensor_projected_e, god_tensor_projected_h,
         god_distances, coupling_score
     """
-    params = np.array(geometry_params)
+    params = np.array(geometry_params, dtype=float)
 
     # ── KNN on geometry params ─────────────────────────────────────
-    similarities = []
-    for sample in gt.samples:
-        s_params = np.array(sample.geometry_params)
-        dist = float(np.linalg.norm(params - s_params))
-        sim = math.exp(-(dist**2) / 0.5)
-        similarities.append((sim, sample))
+    # Only same-shape samples are comparable: (w, h) - (r,) would broadcast
+    # into a meaningless distance. Fall back to all samples, equally
+    # weighted, if the training set has no geometry of this shape.
+    same_shape = [s for s in gt.samples if len(s.geometry_params) == len(params)]
+    if same_shape:
+        d2 = np.array(
+            [np.sum((params - np.array(s.geometry_params)) ** 2) for s in same_shape]
+        )
+        # Gaussian kernel exp(-d²/0.5), shifted by the nearest distance so the
+        # weights cannot all underflow to 0 for a far-away query
+        sims = np.exp(-(d2 - d2.min()) / 0.5)
+        candidates = same_shape
+    else:
+        log.warning("knn_no_same_shape_samples", shape=shape, n_params=len(params))
+        sims = np.ones(len(gt.samples))
+        candidates = list(gt.samples)
 
-    similarities.sort(key=lambda x: -x[0])
-    top_k = similarities[:5]
-
-    total_weight = sum(sim for sim, _ in top_k)
+    order = np.argsort(-sims, kind="stable")[:5]
+    top_k = [(float(sims[i]), candidates[i]) for i in order]
+    weights = [sim for sim, _ in top_k]
+    total_weight = float(sum(weights))
 
     # KNN fingerprint: weighted average of ACTUAL training fingerprints
     # (not invented from embedding coordinates)
-    e_fingerprints = [s.e_fingerprint for _, s in top_k]
-    h_fingerprints = [s.h_fingerprint for _, s in top_k]
-
-    # Weighted average of scalar fields for the KNN prediction
     knn_e_fp = _average_fingerprints(
-        e_fingerprints, [sim for sim, _ in top_k], total_weight
+        [s.e_fingerprint for _, s in top_k], weights, total_weight
     )
     knn_h_fp = _average_fingerprints(
-        h_fingerprints, [sim for sim, _ in top_k], total_weight
+        [s.h_fingerprint for _, s in top_k], weights, total_weight
     )
 
     # ── God Tensor projection ──────────────────────────────────────
-    e_interp = sum(sim / total_weight * s.e_embedding for sim, s in top_k)
-    h_interp = sum(sim / total_weight * s.h_embedding for sim, s in top_k)
+    w_arr = np.array(weights)[:, None] / total_weight
+    e_interp = np.sum(w_arr * np.array([s.e_embedding for _, s in top_k]), axis=0)
+    h_interp = np.sum(w_arr * np.array([s.h_embedding for _, s in top_k]), axis=0)
     e_interp = e_interp / (np.linalg.norm(e_interp) + 1e-10)
     h_interp = h_interp / (np.linalg.norm(h_interp) + 1e-10)
 
-    # Project through T
-    e_via_gt = gt.get_e_to_h_map(e_interp)  # E -> T(E) = predicted H
-    h_via_gt = gt.get_h_to_e_map(h_interp)  # H -> T(H) = predicted E
+    # Project through the learned coupling
+    e_via_gt = gt.get_e_to_h_map(e_interp)  # T(E)  = predicted H
+    h_via_gt = gt.get_h_to_e_map(h_interp)  # T⁺(H) = predicted E
 
-    # Distance from God Tensor
-    god_dist_e = float(np.linalg.norm(e_via_gt - gt.god_tensor))
-    god_dist_h = float(np.linalg.norm(h_via_gt - gt.god_tensor))
+    # Sign-invariant distance from the God Tensor (an eigenvector, ±x*)
+    god = gt.god_tensor
+    if god is None:
+        raise ValueError("Must call find_fixed_point first")
+    god_dist_e = float(sign_invariant_distance(e_via_gt, god))
+    god_dist_h = float(sign_invariant_distance(h_via_gt, god))
 
     # God Tensor projected fingerprints (for comparison with KNN)
-    gt_e_fp = _embed_to_fingerprint(h_via_gt, source="e_via_gt")
-    gt_h_fp = _embed_to_fingerprint(e_via_gt, source="h_via_gt")
+    gt_e_fp = _embed_to_fingerprint(h_via_gt, source="e_via_gt")  # predicted E
+    gt_h_fp = _embed_to_fingerprint(e_via_gt, source="h_via_gt")  # predicted H
 
     return {
         "geometry_params": geometry_params,
@@ -107,8 +115,8 @@ def predict_eh_barcode(
         "knn_e_fingerprint": knn_e_fp,
         "knn_h_fingerprint": knn_h_fp,
         # God Tensor projections
-        "god_tensor_projected_e": gt_e_fp,  # H <- T(E) — predicted H
-        "god_tensor_projected_h": gt_h_fp,  # E <- T(H) — predicted E
+        "god_tensor_projected_e": gt_e_fp,  # E <- T⁺(H) — predicted E
+        "god_tensor_projected_h": gt_h_fp,  # H <- T(E)  — predicted H
         "god_distance_e": god_dist_e,
         "god_distance_h": god_dist_h,
         "coupling_score": gt.god_score(),
@@ -230,11 +238,11 @@ def benchmark(
 
         try:
             mode_data = solve_cavity_modes(geom, nx=nx, ny=ny, num_modes=6)
-        except Exception:
+        except Exception:  # pragma: no cover - degenerate geometry
             continue
 
-        e_field = np.array(next(iter(mode_data["e_modes"].values()))["field"])
-        h_field = np.array(next(iter(mode_data["h_modes"].values()))["field"])
+        e_field = np.array(mode_data["e_modes"]["mode_0"]["field"])
+        h_field = np.array(mode_data["h_modes"]["mode_0"]["field"])
         actual = coupled_fingerprint(e_field, h_field)
 
         # Get prediction

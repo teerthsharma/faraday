@@ -286,20 +286,22 @@ class ManifoldProjector:
                 # Decode
                 recon = np.maximum(h @ self.decoder_weights.T, 0)  # type: ignore[union-attr]
 
-                # MSE loss
+                # MSE loss over every element of the batch
                 loss = np.mean((batch - recon) ** 2)
                 epoch_loss += loss
 
-                # Gradient: dL/dW_enc = dL/dRecon @ dRecon/dh @ dh/dW_enc
-                # Simplified: use reconstruction error to update weights
-                d_recon = 2 * (recon - batch) / len(batch)
+                # Exact backprop of that loss through both ReLUs
+                d_recon = 2 * (recon - batch) / batch.size
+                d_recon[recon <= 0] = 0  # decoder ReLU gradient
                 d_h = d_recon @ self.decoder_weights  # type: ignore[union-attr]
-                d_h[h == 0] = 0  # ReLU gradient
+                d_h[h <= 0] = 0  # encoder ReLU gradient
 
-                # dL/dW_enc = (dL/dh).T @ x  →  (16, n) @ (n, 50) = (16, 50)
-                self.encoder_weights -= lr * (d_h.T @ batch) / len(batch)  # type: ignore[union-attr]
                 # dL/dW_dec = (dL/dRecon).T @ h  →  (50, n) @ (n, 16) = (50, 16)
-                self.decoder_weights -= lr * (d_recon.T @ h) / len(batch)  # type: ignore[union-attr]
+                grad_dec = d_recon.T @ h
+                # dL/dW_enc = (dL/dh).T @ x  →  (16, n) @ (n, 50) = (16, 50)
+                grad_enc = d_h.T @ batch
+                self.decoder_weights -= lr * grad_dec  # type: ignore[union-attr]
+                self.encoder_weights -= lr * grad_enc  # type: ignore[union-attr]
 
             losses.append(float(epoch_loss))
             if verbose and (epoch + 1) % 20 == 0:

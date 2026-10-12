@@ -33,34 +33,22 @@ class TestGodTensor:
     def test_god_tensor_fixed_point_convergence(self):
         from faraday import GodTensor
 
-        # Note: fixed_point_converged=True requires T to have an eigenvector
-        # with eigenvalue λ ≈ 1. This needs homogeneous/similar geometries so
-        # the learned coupling operator is nearly isometric. With heterogeneous
-        # geometries (varying aspect ratios, sizes) the eigenvalue spectrum
-        # of T spreads and λ ≈ 1 may not exist -- this is mathematically
-        # correct behavior, not an error.
-        #
-        # Use more, similar geometries for convergence, or assert pipeline run:
+        # The fixed point is the eigenvector of T with eigenvalue nearest 1,
+        # reached by a Banach contraction (shifted inverse iteration) from a
+        # generic start. Certify it: contraction factor < 1, converged, and
+        # T x = λ* x to machine precision.
         gt = GodTensor(n_geometries=30)
         gt.collect_training_data(nx=15, ny=15, num_modes=2, seed=42)
         gt.learn_T()
         god = gt.find_fixed_point(iters=300, tol=1e-6)
         assert god.shape == (16,)
         assert gt.god_tensor is not None
-        # Assert: god_tensor exists AND T(god) ≈ god (verification_error small)
-        # OR god_tensor was found via spectral analysis (eigenvector closest to λ=1)
-        assert len(gt.convergence_history) > 0
-        # Either converged via iteration, or spectral init was used
-        final_delta = gt.convergence_history[-1]["delta"]
-        final_eig_dist = abs(
-            float(np.linalg.eigvals(gt.T_matrix)[
-                np.argmin(np.abs(np.linalg.eigvals(gt.T_matrix) - 1.0))
-            ]) - 1.0
-        ) if gt.T_matrix is not None else 1.0
-        assert final_delta < 0.5 or final_eig_dist < 0.5, (
-            f"fixed point delta={final_delta:.4f} and eigenvalue_dist={final_eig_dist:.4f}. "
-            "Neither iteration nor spectral init produced a usable eigenvector."
-        )
+        assert gt.contraction_factor < 1
+        assert gt.fixed_point_converged
+        assert gt.convergence_history[-1]["delta"] < 1e-6
+        lam = gt.fixed_point_eigenvalue
+        assert abs(lam.imag) < 1e-12
+        np.testing.assert_allclose(gt.T_matrix @ god, lam.real * god, atol=1e-8)
 
     def test_god_score(self):
         from faraday import GodTensor

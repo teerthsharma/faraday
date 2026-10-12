@@ -79,7 +79,7 @@ jobs:
           import sys, re
           with open('validation.log') as f:
               text = f.read()
-          match = re.search(r'mean_E_err=([0-9.]+)\s+mean_H_err=([0-9.]+)', text)
+          match = re.search(r'mean_E_err=([0-9.]+)[\s|]+mean_H_err=([0-9.]+)', text)
           if not match:
               print('ERROR: could not parse validation results')
               sys.exit(1)

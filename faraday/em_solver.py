@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from faraday.exceptions import SolverError
 from faraday.logging import get_logger
 
 if TYPE_CHECKING:
@@ -128,11 +129,12 @@ def make_circular_grid(
     X, Y : np.ndarray
         2D coordinate arrays of shape ``(nx, nx)``.
     interior : np.ndarray
-        Boolean mask, ``True`` for points inside the circle.
+        Boolean mask, ``True`` for points strictly inside the circle. Points on
+        the circle itself are PEC boundary nodes (E_z = 0).
     """
     coord = np.linspace(-r, r, nx)
     X, Y = np.meshgrid(coord, coord)
-    interior = r**2 >= (X**2 + Y**2)
+    interior = r**2 > (X**2 + Y**2)
     return X, Y, interior
 
 
@@ -144,12 +146,16 @@ def make_circular_grid(
 def build_laplacian_2d(
     nx: int, ny: int, dx: float, dy: float, interior: np.ndarray
 ) -> csr_matrix:  # type: ignore[name-defined]
-    """Build the 5-point finite-difference Laplacian for the 2D Helmholtz problem.
+    """Build the 5-point Dirichlet Laplacian restricted to the interior nodes.
 
     The Laplacian applies the discrete approximation:
 
         ∇²f ≈ (f_{i+1,j} - 2f_{i,j} + f_{i-1,j}) / dx²
              + (f_{i,j+1} - 2f_{i,j} + f_{i,j-1}) / dy²
+
+    PEC (Dirichlet) boundary: every non-interior node is pinned to f = 0, so
+    its column contributes nothing and it is eliminated from the system. The
+    result is symmetric negative-definite, which is what ``eigsh`` assumes.
 
     Parameters
     ----------
@@ -158,49 +164,46 @@ def build_laplacian_2d(
     dx, dy : float
         Grid spacing in x and y.
     interior : np.ndarray
-        Boolean mask, ``True`` for interior (cavity) points.
+        Boolean mask of shape ``(ny, nx)``, ``True`` for interior (cavity) points.
 
     Returns
     -------
-    np.ndarray
-        Sparse CSR matrix of shape ``(nx * ny, nx * ny)`` representing the Laplacian.
+    csr_matrix
+        Sparse matrix of shape ``(n_int, n_int)`` with ``n_int = interior.sum()``.
+        Unknowns are ordered as ``X[interior]`` (row-major over the grid).
     """
-    n = nx * ny
-    row_idx: list[int] = []
-    col_idx: list[int] = []
-    data: list[float] = []
-
-    for j in range(ny):
-        for i in range(nx):
-            idx = i + j * nx
-            if not interior[j, i]:
-                row_idx.append(idx)
-                col_idx.append(idx)
-                data.append(-1e6)
-                continue
-            row_idx.append(idx)
-            col_idx.append(idx)
-            data.append(-2.0 / dx**2 - 2.0 / dy**2)
-            if i + 1 < nx:
-                row_idx.append(idx)
-                col_idx.append(idx + 1)
-                data.append(1.0 / dx**2)
-            if i - 1 >= 0:
-                row_idx.append(idx)
-                col_idx.append(idx - 1)
-                data.append(1.0 / dx**2)
-            if j + 1 < ny:
-                row_idx.append(idx)
-                col_idx.append(idx + nx)
-                data.append(1.0 / dy**2)
-            if j - 1 >= 0:
-                row_idx.append(idx)
-                col_idx.append(idx - nx)
-                data.append(1.0 / dy**2)
-
     from scipy.sparse import csr_matrix
 
-    return csr_matrix((data, (row_idx, col_idx)), shape=(n, n))  # type: ignore[return-value]
+    interior = np.asarray(interior, dtype=bool)
+    if interior.shape != (ny, nx):
+        msg = f"interior mask shape {interior.shape} != (ny, nx) = {(ny, nx)}"
+        raise ValueError(msg)
+
+    n_int = int(interior.sum())
+    index = np.full(interior.shape, -1, dtype=np.int64)
+    index[interior] = np.arange(n_int)
+
+    diag = np.arange(n_int)
+    rows = [diag]
+    cols = [diag]
+    data = [np.full(n_int, -2.0 / dx**2 - 2.0 / dy**2)]
+
+    # Couple every pair of neighbouring interior nodes (both directions → symmetric)
+    for p, q, step in (
+        (index[:, :-1], index[:, 1:], dx),
+        (index[:-1, :], index[1:, :], dy),
+    ):
+        both = (p >= 0) & (q >= 0)
+        a, b = p[both], q[both]
+        w = np.full(a.size, 1.0 / step**2)
+        rows += [a, b]
+        cols += [b, a]
+        data += [w, w]
+
+    return csr_matrix(
+        (np.concatenate(data), (np.concatenate(rows), np.concatenate(cols))),
+        shape=(n_int, n_int),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -235,9 +238,11 @@ def solve_cavity_modes(
     geometry : CavityGeometry
         The cavity shape and dimensions.
     nx, ny : int
-        Grid resolution.
+        Grid resolution. Circular cavities use a square ``nx x nx`` grid and
+        ignore ``ny``.
     num_modes : int
-        Maximum number of eigenmodes to compute.
+        Maximum number of eigenmodes to compute. Modes are returned in
+        ascending ``k``: ``mode_0`` is the fundamental (lowest-frequency) mode.
     seed : int, optional
         Random seed for the ARPACK eigenvalue solver (eigsh). When None
         (default), the solver uses unseeded random initialization which
@@ -260,9 +265,9 @@ def solve_cavity_modes(
         interior = geometry.contains(X, Y)
     elif geometry.shape == CavityShape.CIRCULAR:
         (r,) = geometry.dims
+        ny = nx  # square grid; ny is meaningless for a circle
         X, Y, interior = make_circular_grid(r, nx)
-        dx = 2 * r / (nx - 1)
-        dy = 2 * r / (nx - 1)
+        dx = dy = 2 * r / (nx - 1)
     else:
         msg = f"Unsupported shape: {geometry.shape}"
         raise NotImplementedError(msg)
@@ -277,88 +282,71 @@ def solve_cavity_modes(
     )
 
     L = build_laplacian_2d(nx, ny, dx, dy, interior)
-    n_interior = interior.sum()
-    n_total = L.shape[0]
+    n_int = L.shape[0]
+    n_eig = min(num_modes, n_int - 1)
+    if n_eig < 1:
+        raise SolverError(
+            "too few interior points for an eigenmode",
+            n_interior=n_int,
+            nx=nx,
+            ny=ny,
+        )
 
+    # L is symmetric negative-definite with eigenvalues -k². The fundamental
+    # modes are the eigenvalues closest to 0, so use shift-invert about
+    # sigma=0: it maps them to the largest-magnitude eigenvalues of L⁻¹, which
+    # Lanczos resolves in a few iterations. (which="SM" without a shift
+    # converges poorly and skips modes.) Seeding v0 makes ARPACK reproducible.
     from scipy.sparse.linalg import eigsh
 
-    # "SM" finds the eigenvalues with the smallest magnitude.
-    # We set exterior points to have a huge eigenvalue (-1e6) so they are ignored.
-    # L is negative-semidefinite (eigenvalues = -k² ≤ 0).
-    # We find the fundamental (lowest-frequency) modes, which have the smallest
-    # non-zero k, perfectly matching the theoretical claims of the pipeline.
-    #
-    # For reproducibility, we seed the ARPACK iteration by providing a random
-    # initial guess via the ``v0`` parameter.  This is equivalent to the
-    # ``rng`` parameter (introduced in scipy 1.16) but works on older scipy
-    # versions too.
-    if seed is not None:
-        rng = np.random.default_rng(seed)
-        v0 = rng.random(n_total)
-    else:
-        v0 = None
+    v0 = np.random.default_rng(seed).random(n_int) if seed is not None else None
+    lam, vecs = eigsh(L, k=n_eig, sigma=0.0, which="LM", v0=v0)
 
-    k_raw, v = eigsh(
-        L,
-        k=min(num_modes + 1, max(1, n_interior - 1)),
-        which="SM",
-        tol=1e-3,
-        maxiter=10000,
-        v0=v0,
-    )
-    k_squared = -k_raw
-    k_values = np.sqrt(np.maximum(k_squared, 0))
-
-    # Filter spurious PEC Dirichlet zero-modes (k ≈ 0)
-    valid_idx = [i for i, kk in enumerate(k_values) if kk > 1e-6][:num_modes]
+    order = np.argsort(-lam)  # -k² descending  ⇔  k ascending
+    k_values = np.sqrt(np.maximum(-lam[order], 0.0))
+    vecs = vecs[:, order]
 
     log.info(
         "eigsh_complete",
         requested_modes=num_modes,
-        found_modes=len(valid_idx),
-        k_values=k_values[valid_idx][:3].tolist(),
+        found_modes=len(k_values),
+        k_values=k_values[:3].tolist(),
     )
 
     e_modes: dict[str, dict] = {}
     h_modes: dict[str, dict] = {}
     s_modes: dict[str, dict] = {}
 
-    for count, i in enumerate(valid_idx):
-        kk = k_values[i]
+    c = 1.0  # natural units: c = μ = 1  →  ω = k
+    for count, kk in enumerate(k_values):
         e_map = np.zeros((ny, nx))
-        hx_map = np.zeros((ny, nx))
-        hy_map = np.zeros((ny, nx))
+        e_map[interior] = vecs[:, count]
 
-        for j in range(ny):
-            for ii in range(nx):
-                idx = ii + j * nx
-                if not interior[j, ii]:
-                    continue
-                e_val = v[idx, i]
-                e_map[j, ii] = e_val
-                # H-field from E-field via Maxwell's curl equations (finite-difference)
-                if 0 < ii < nx - 1 and 0 < j < ny - 1:
-                    dex_dy = (v[idx + nx, i] - v[idx - nx, i]) / (2 * dy)
-                    dex_dx = (v[idx + 1, i] - v[idx - 1, i]) / (2 * dx)
-                    C_SPEED_OF_LIGHT = 1.0
-                    omega = (kk * C_SPEED_OF_LIGHT) if kk > 1e-6 else 1.0
-                    hx_map[j, ii] = abs(dex_dy) / omega
-                    hy_map[j, ii] = abs(dex_dx) / omega
+        # H from E via Maxwell's curl (TM): H_x = (i/ωμ) ∂E_z/∂y,
+        # H_y = -(i/ωμ) ∂E_z/∂x. Central differences; the zero padding is the
+        # PEC wall. The common factor i is a 90° phase and is dropped.
+        e_pad = np.pad(e_map, 1)
+        de_dx = (e_pad[1:-1, 2:] - e_pad[1:-1, :-2]) / (2 * dx)
+        de_dy = (e_pad[2:, 1:-1] - e_pad[:-2, 1:-1]) / (2 * dy)
+        omega = kk * c
+        hx_map = np.where(interior, de_dy / omega, 0.0)
+        hy_map = np.where(interior, -de_dx / omega, 0.0)
 
-        # Poynting vector magnitude: |S| = |E| | |H| (energy flux density)
-        h_mag = np.sqrt(hx_map**2 + hy_map**2)
+        h_mag = np.hypot(hx_map, hy_map)
+        # Poynting vector magnitude: |S| = |E| |H| (energy flux density)
         s_map = np.abs(e_map) * h_mag
 
+        wavelength = float(2 * np.pi / kk)
         e_modes[f"mode_{count}"] = {
             "k": float(kk),
-            "wavelength": float(2 * np.pi / kk) if kk > 0 else float("inf"),
+            "wavelength": wavelength,
             "field": e_map.tolist(),
             "nx": nx,
             "ny": ny,
         }
         h_modes[f"mode_{count}"] = {
             "k": float(kk),
-            "wavelength": float(2 * np.pi / kk) if kk > 0 else float("inf"),
+            "wavelength": wavelength,
             "field": h_mag.tolist(),
             "hx": hx_map.tolist(),
             "hy": hy_map.tolist(),
@@ -378,7 +366,7 @@ def solve_cavity_modes(
         "nx": nx,
         "ny": ny,
         "num_modes_found": len(e_modes),
-        "k_values": [float(kk) for kk in k_values[valid_idx]],
+        "k_values": [float(kk) for kk in k_values],
         "e_modes": e_modes,
         "h_modes": h_modes,
         "s_modes": s_modes,
@@ -457,6 +445,7 @@ class WaveSuperposer:
         self.e_waves: list[EMWave] = []
         self.h_waves: list[EMWave] = []
         self.active_mode_idx: int | None = None
+        self.active_h_mode_idx: int | None = None
         self.e_mode_amp: complex = 1.0 + 0j
         self.h_mode_amp: complex = 1.0 + 0j
 
@@ -482,6 +471,7 @@ class WaveSuperposer:
         if key not in modes:
             msg = f"Mode {mode_idx} not found in h_modes"
             raise KeyError(msg)
+        self.active_h_mode_idx = mode_idx
         self.h_mode_amp = amplitude
         return self
 
@@ -535,8 +525,8 @@ class WaveSuperposer:
     ) -> np.ndarray:
         """Compute total H-field at grid positions and time."""
         total = np.zeros_like(X, dtype=complex)
-        if hasattr(self, "h_mode_amp"):
-            mode_key = f"mode_{self.active_mode_idx or 0}"
+        if self.active_h_mode_idx is not None:
+            mode_key = f"mode_{self.active_h_mode_idx}"
             h_map = np.array(self.mode_data["h_modes"][mode_key]["field"])
             total += self.h_mode_amp * h_map
         for wave in self.h_waves:

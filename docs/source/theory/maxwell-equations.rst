@@ -53,12 +53,15 @@ and :math:`k^2` are the squared resonant wave numbers.
 Eigenvalue Spectrum
 ~~~~~~~~~~~~~~~~~~~
 
-- :math:`k^2 \leq 0` — the Laplacian is negative-semidefinite
-- The dominant (largest-magnitude) eigenvalue gives the **fundamental mode**
+- The Dirichlet (PEC) Laplacian restricted to interior nodes is symmetric
+  negative-definite: its eigenvalues are :math:`-k^2 < 0`
+- The eigenvalue *closest to zero* (smallest :math:`k`) gives the **fundamental mode**
 - Higher modes have increasingly oscillatory field patterns
 
-Faraday's solver uses ``scipy.sparse.linalg.eigsh`` with ``which="LM"``
-(Largest Magnitude) to extract these eigenpairs.
+Faraday's solver uses ``scipy.sparse.linalg.eigsh`` in shift-invert mode
+(``sigma=0``), which makes the smallest-:math:`k` modes the dominant ones of
+:math:`\mathbf{L}^{-1}`, and returns them in ascending :math:`k`
+(``mode_0`` is the fundamental).
 
 H-Field Derivation
 ------------------

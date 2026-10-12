@@ -113,7 +113,7 @@ Predict E/H for new geometries via KNN + God Tensor
 
 **1. FDFD solver** — `em_solver.py`
 - 5-point finite-difference Laplacian on rectangular PEC cavity
-- `scipy.sparse.linalg.eigsh(which="SM")` returns eigenvectors sorted by ascending k (fundamental mode first)
+- Symmetric Dirichlet Laplacian on interior nodes; `scipy.sparse.linalg.eigsh(sigma=0)` (shift-invert), modes sorted by ascending k (fundamental mode first)
 - TM modes: Ez dominant, H = transverse (Hx, Hy) from Maxwell curl equations
 - H stored as magnitude `|H| = sqrt(Hx² + Hy²)`
 
@@ -343,11 +343,13 @@ You can — the physics is well-established. Faraday is useful when:
 | The unified E×H entity | The 16D vector `x* = T(x*)` invariant under the learned coupling operator |
 | Fixed point `T(T(x)) = T(x)` | The embedding where E→T(E) and H→T(H) produce the same representation |
 | "Learned from data" | T was learned via `lstsq(E_emb, H_emb)` on FDFD-derived barcodes |
-| Banach convergence to ε | Power iteration on T's dominant eigenvector — guaranteed by Perron-Frobenius for ρ(T)≈1 |
+| Banach convergence to ε | Shifted inverse iteration `(T − μI)⁻¹`, μ≈1, onto the eigenvector with eigenvalue nearest 1; contraction factor `q = |λ*−μ|/|λ₂−μ|` |
 
 **Why it converged to 1e-16:**
 
-The training data (20 rectangular cavities with random aspect ratios) produces a T matrix whose **dominant eigenvalue is ≈ 1.0**. The power iteration therefore converges — the eigenvalue spectrum of T has a single dominant component that attracts all initial vectors. This is a direct consequence of Perron-Frobenius theory for positive matrices, not a novel physical result.
+The learned T has an eigenvalue at **λ* ≈ 1** whose eigenvector is where the training data lands under T. That eigenvalue is *not* the dominant one (λ_max ≈ 1.25 on the default training set), so plain power iteration would converge to the wrong vector; Faraday iterates the shifted inverse `(T − μI)⁻¹` instead, which contracts onto the λ*≈1 eigenvector from any generic start (q ≈ 4×10⁻⁶ on the default set). `GodTensor.find_fixed_point` logs λ*, q, the eigen-residual `‖Tx − λ*x‖` and the fixed-point defect `‖Tx − x‖ = |λ* − 1|`.
+
+> The 50,000-epoch burn numbers above were produced before this fix, by power iteration seeded at the λ≈1 eigenvector; the early-epoch rise in loss (1.5e-9 → 7.4e-5) is that seed escaping the repelling fixed point toward the dominant one.
 
 The Betti-1 plateau at 0.00328 is the **residual topological mismatch** in the training data. Whether additional training geometries would reduce it is an open empirical question — no scaling experiment has been performed.
 

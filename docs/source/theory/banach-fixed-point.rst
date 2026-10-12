@@ -31,46 +31,50 @@ If :math:`f` is a contraction on a complete metric space, then:
 
    converges to :math:`x^*` at rate :math:`O(q^n)`
 
-Power Iteration as Contraction
------------------------------
+Shifted Inverse Iteration as Contraction
+----------------------------------------
 
-Faraday's iteration is:
+The God Tensor is the invariant of the learned coupling, :math:`T\mathbf{g} = \mathbf{g}`:
+the eigenvector of :math:`T` whose eigenvalue :math:`\lambda^*` is nearest 1.
 
-.. math::
+Plain power iteration, :math:`f(\mathbf{x}) = \text{normalize}(T\mathbf{x})`,
+cannot find it in general. Every real eigenvector of :math:`T` is a fixed point
+of :math:`f`, but only the one with the largest :math:`|\lambda|` is
+*attracting*; all others are repelling. A learned :math:`T` need not have
+:math:`\lambda_{\max} = 1` (on the default training set :math:`\lambda_{\max} \approx 1.25`
+while :math:`\lambda^* = 1.000`), so power iteration converges to the wrong vector.
 
-   f(\mathbf{x}) = \text{normalize}(T \, \mathbf{x})
-
-This is **not** a strict contraction on the unit sphere under Euclidean distance.
-However, on the unit sphere, the operator :math:`\mathbf{x} \mapsto T\mathbf{x}`
-has a well-defined dominant eigenvector — the **Perron-Frobenius eigenvector** —
-which is the fixed point of the un-normalized iteration.
-
-Normalization maps the iteration back to the unit sphere :math:`S^{d-1}`.
-On :math:`S^{d-1}`, power iteration converges geometrically:
+Faraday therefore iterates the shifted inverse
 
 .. math::
 
-   \|\mathbf{x}_n - \mathbf{x}^*\| \leq C \cdot |\lambda_1 / \lambda_2|^n
+   G(\mathbf{x}) = \frac{(T - \mu I)^{-1}\mathbf{x}}{\|(T - \mu I)^{-1}\mathbf{x}\|},
+   \qquad \mu = 1 + \varepsilon
 
-where :math:`\lambda_1` and :math:`\lambda_2` are the largest and second-largest
-singular values of :math:`T`. The convergence rate is determined by the
-**spectral gap** :math:`|\lambda_1/\lambda_2|`.
+The eigenvalues of :math:`(T - \mu I)^{-1}` are :math:`1/(\lambda_j - \mu)`, so the
+eigenvector with :math:`\lambda_j` nearest :math:`\mu` dominates and :math:`G`
+contracts onto it (projectively, i.e. up to sign) with Lipschitz constant
 
-Spectral Properties of T
-~~~~~~~~~~~~~~~~~~~~~~~~
+.. math::
 
-- :math:`T` is learned from data; its singular values depend on the geometry set
-- A **large spectral gap** → fast convergence (few iterations needed)
-- A **small spectral gap** → slow convergence (many iterations needed)
-- A rank-deficient :math:`T` (fewer samples than dimensions) has :math:`\lambda_i = 0`
-  for :math:`i > \text{rank}(T)`, making convergence impossible
+   q = \frac{|\lambda^* - \mu|}{|\lambda_2 - \mu|} < 1
 
-Faraday requires :math:`n_{\text{geometries}} \geq d = 16` for reliable convergence.
+where :math:`\lambda_2` is the next-nearest eigenvalue to :math:`\mu`. The small
+offset :math:`\varepsilon = 10^{-6}\|T\|_2` keeps :math:`T - \mu I` invertible
+when :math:`\lambda^* = 1` exactly; it only makes :math:`q` smaller. Iterates satisfy
+
+.. math::
+
+   \|\mathbf{x}_n - \mathbf{x}^*\| \leq C \cdot q^n
+
+If the eigenvalue nearest 1 is a complex pair, :math:`q = 1`: there is no real
+fixed point and the iteration does not converge.
 
 Convergence Criteria in Faraday
 ------------------------------
 
-Faraday uses two convergence criteria in ``GodTensor.find_fixed_point``:
+``GodTensor.find_fixed_point`` starts from a generic (non-eigenvector) unit
+vector, so convergence is earned rather than assumed, and stops when:
 
 1. **Fixed-point residual** (primary):
 
@@ -78,34 +82,31 @@ Faraday uses two convergence criteria in ``GodTensor.find_fixed_point``:
 
       \|\mathbf{x}_{n+1} - \mathbf{x}_n\| < \epsilon_{\text{tol}}
 
-   with :math:`\epsilon_{\text{tol}} = 10^{-7}`.
+   with :math:`\epsilon_{\text{tol}} = 10^{-7}` (sign-invariant).
 
-2. **Iteration limit** (safety cap):
+2. **Iteration limit** (safety cap): :math:`n > n_{\text{max}} = 500`.
 
-   .. math::
-
-      n > n_{\text{max}}
-
-   with :math:`n_{\text{max}} = 500` to prevent infinite loops.
-
-If neither criterion is met, the solver raises ``ConvergenceError``.
+If the cap is hit, a warning is logged and ``fixed_point_converged`` stays
+``False``. The result is certified by ``fixed_point_eigenvalue``
+(:math:`\lambda^*`), ``contraction_factor`` (:math:`q`), the eigen-residual
+:math:`\|T\mathbf{x} - \lambda^*\mathbf{x}\|` and the fixed-point defect
+:math:`\|T\mathbf{x} - \mathbf{x}\| = |\lambda^* - 1|`.
 
 Why Normalization?
 ~~~~~~~~~~~~~~~~~
 
-Without normalization, :math:`\mathbf{x}_{n+1} = T\mathbf{x}_n` grows or decays
-geometrically as :math:`\|T\|^n`. Normalization constrains the iterates to the
-unit sphere, making the iteration **scale-invariant** — independent of the
-absolute magnitude of :math:`T`.
+Without normalization, :math:`\mathbf{x}_{n+1} = (T - \mu I)^{-1}\mathbf{x}_n`
+grows geometrically as :math:`|\lambda^* - \mu|^{-n}`. Normalization constrains the
+iterates to the unit sphere, making the iteration **scale-invariant**: only the
+direction of :math:`\mathbf{x}` matters, which is all an eigenvector defines.
 
 Connection to Google PageRank
 -----------------------------
 
-The power iteration method is the same algorithm used in Google's original
-PageRank. There, the Google matrix :math:`G` has a dominant eigenvalue 1
-(the PageRank vector), found by iterating :math:`\mathbf{r}_{n+1} = G\mathbf{r}_n`
-starting from a uniform distribution. The God Tensor iteration is the same
-algorithm applied to the electromagnetic coupling operator.
+PageRank also seeks the eigenvalue-1 eigenvector of an operator, but there the
+Google matrix is column-stochastic, so 1 is guaranteed to be its *dominant*
+eigenvalue and plain power iteration suffices. A learned :math:`T` carries no
+such guarantee, which is why Faraday uses the shifted inverse.
 
 References
 ----------
