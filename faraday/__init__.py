@@ -51,12 +51,16 @@ from faraday.benchmarking import (
 # CLI entry point
 from faraday.cli import cli_main
 
+# E ⇄ H topological duality
+from faraday.duality import ModeTopology, mode_topology
+
 # Core API
 from faraday.em_solver import (
     CavityGeometry,
     CavityShape,
     WaveSuperposer,
     solve_cavity_modes,
+    solve_interior_modes,
 )
 
 # Re-export exceptions
@@ -107,9 +111,12 @@ __all__ = sorted([
     "field_to_pointcloud",
     "GodTensor",
     "ManifoldProjector",
+    "ModeTopology",
+    "mode_topology",
     "predict_eh_barcode",
     "run_validation_experiment",
     "solve_cavity_modes",
+    "solve_interior_modes",
     "topological_fingerprint",
     "ValidationReport",
     "WaveSuperposer",

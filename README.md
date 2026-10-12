@@ -336,6 +336,31 @@ You can — the physics is well-established. Faraday is useful when:
 
 ---
 
+## Topological E ⇄ H Duality
+
+In a TM mode, H is ∇E rotated by 90°, so zeros of H (vortices) are critical
+points of E. Two exact laws tie their topology together:
+
+```
+charge of H inside each nodal domain Ω of E  =  χ(Ω)
+total charge of H in the cavity D            =  χ(D) + N_wall / 2
+```
+
+N_wall is the number of points where E's nodal lines touch the wall, so the
+wall decides the bulk. Measured on 132/132 modes of 11 cavities (rectangle to
+stadium to a disk with two holes, χ = +1, 0, −1). Least squares on the data
+rediscovers the coefficients exactly (1.0000, 0.5000). Topology changes in
+generic cavities by nodal lines detaching from the wall at avoided crossings.
+
+```bash
+faraday topology -w 2 -h 1 -n 8
+python experiments/duality_study.py
+```
+
+Details, evidence and prior art: [`docs/DUALITY.md`](docs/DUALITY.md).
+
+---
+
 ## The God Tensor: What It Is and Why It Converged
 
 | "God Tensor" means... | Concrete meaning |

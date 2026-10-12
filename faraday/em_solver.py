@@ -260,14 +260,11 @@ def solve_cavity_modes(
     if geometry.shape == CavityShape.RECTANGULAR:
         w, h = geometry.dims
         X, Y = make_rectangular_grid(w, h, nx, ny)
-        dx = w / (nx - 1)
-        dy = h / (ny - 1)
         interior = geometry.contains(X, Y)
     elif geometry.shape == CavityShape.CIRCULAR:
         (r,) = geometry.dims
         ny = nx  # square grid; ny is meaningless for a circle
         X, Y, interior = make_circular_grid(r, nx)
-        dx = dy = 2 * r / (nx - 1)
     else:
         msg = f"Unsupported shape: {geometry.shape}"
         raise NotImplementedError(msg)
@@ -280,6 +277,46 @@ def solve_cavity_modes(
         ny=ny,
         interior_points=int(interior.sum()),
     )
+    result = solve_interior_modes(X, Y, interior, num_modes=num_modes, seed=seed)
+    result["geometry"] = str(geometry.shape.value)
+    result["dims"] = geometry.dims
+    return result
+
+
+def solve_interior_modes(
+    X: np.ndarray,
+    Y: np.ndarray,
+    interior: np.ndarray,
+    num_modes: int = 12,
+    seed: int | None = None,
+) -> ModeData:
+    """Solve TM eigenmodes of an arbitrary PEC cavity given as a grid mask.
+
+    Any planar cavity — convex or not, with or without holes — is described by
+    a uniform meshgrid ``(X, Y)`` and a boolean ``interior`` mask; every
+    non-interior node is PEC (E_z = 0). :func:`solve_cavity_modes` builds the
+    mask for the named shapes and delegates here.
+
+    Parameters
+    ----------
+    X, Y : np.ndarray
+        Uniform meshgrid coordinates of shape ``(ny, nx)``.
+    interior : np.ndarray
+        Boolean mask of shape ``(ny, nx)``, ``True`` inside the cavity.
+    num_modes : int
+        Number of eigenmodes, returned in ascending ``k``.
+    seed : int, optional
+        Seed for the ARPACK start vector (reproducible results).
+
+    Returns
+    -------
+    ModeData
+        Same layout as :func:`solve_cavity_modes`, with ``geometry="mask"``.
+    """
+    interior = np.asarray(interior, dtype=bool)
+    ny, nx = interior.shape
+    dx = float(X[0, 1] - X[0, 0])
+    dy = float(Y[1, 0] - Y[0, 0])
 
     L = build_laplacian_2d(nx, ny, dx, dy, interior)
     n_int = L.shape[0]
@@ -361,8 +398,8 @@ def solve_cavity_modes(
         }
 
     result: dict[str, Any] = {  # type: ignore[assignment]
-        "geometry": str(geometry.shape.value),
-        "dims": geometry.dims,
+        "geometry": "mask",
+        "dims": (),
         "nx": nx,
         "ny": ny,
         "num_modes_found": len(e_modes),
