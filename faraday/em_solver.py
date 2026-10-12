@@ -289,6 +289,7 @@ def solve_interior_modes(
     interior: np.ndarray,
     num_modes: int = 12,
     seed: int | None = None,
+    mass2: np.ndarray | None = None,
 ) -> ModeData:
     """Solve TM eigenmodes of an arbitrary PEC cavity given as a grid mask.
 
@@ -307,6 +308,12 @@ def solve_interior_modes(
         Number of eigenmodes, returned in ascending ``k``.
     seed : int, optional
         Seed for the ARPACK start vector (reproducible results).
+    mass2 : np.ndarray, optional
+        Photon mass squared m²(x) on the grid (a Higgs / Proca term). The
+        operator becomes ``(-Δ + m²(x)) E = ω² E`` and ``k_values`` holds the
+        frequencies ω; H is still ``∇E`` rotated by 90° over ω (Faraday's law).
+        Scalar TM model: the gradient couplings a varying mass adds to the
+        full Proca equations are neglected.
 
     Returns
     -------
@@ -319,6 +326,10 @@ def solve_interior_modes(
     dy = float(Y[1, 0] - Y[0, 0])
 
     L = build_laplacian_2d(nx, ny, dx, dy, interior)
+    if mass2 is not None:
+        from scipy.sparse import diags
+
+        L = L - diags(np.asarray(mass2, dtype=float)[interior])
     n_int = L.shape[0]
     n_eig = min(num_modes, n_int - 1)
     if n_eig < 1:
@@ -329,7 +340,8 @@ def solve_interior_modes(
             ny=ny,
         )
 
-    # L is symmetric negative-definite with eigenvalues -k². The fundamental
+    # L is symmetric negative-definite with eigenvalues -k² (or -ω² with a
+    # mass term, which only makes it more negative). The fundamental
     # modes are the eigenvalues closest to 0, so use shift-invert about
     # sigma=0: it maps them to the largest-magnitude eigenvalues of L⁻¹, which
     # Lanczos resolves in a few iterations. (which="SM" without a shift

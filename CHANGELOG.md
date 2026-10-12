@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added: Higgs coupling (`faraday.higgs`)
+- `solve_interior_modes(..., mass2=m²)` solves (−Δ + m²(x))E = ω²E, the
+  photon in a Higgs or Proca background (scalar TM model).
+- `higgs_wall_mass2`, `vortex_condensate`, `trapped`, `region_charge`,
+  `box_interior`.
+- Findings:
+  - A PEC wall is the infinite-mass limit of the condensate.
+  - The mass gap protects Q = χ + N/2: 91/91 trapped modes against 34% of
+    untrapped ones.
+  - A condensate-filled hole carries index 1 − ℓ (22/22).
+  - Each vortex traps n_shell(g) photon modes, with exactly 1 below
+    g = m₀ξ = 2.299.
+- `experiments/higgs_study.py`, `docs/HIGGS.md`, `tests/test_higgs.py`.
+
 ### Added — topological E ⇄ H duality
 - `faraday.duality`: exact vortex charges of H (discrete Stokes), nodal
   domains and Euler characteristics, wall nodal count, the `ModeTopology`
