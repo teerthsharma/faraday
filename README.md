@@ -363,6 +363,28 @@ around level crossings): [`docs/QUANTUM.md`](docs/QUANTUM.md).
 
 ---
 
+## Higgs Coupling: the Condensate Generates the Cavity
+
+A Higgs condensate gives the photon a mass, (−Δ + m²(x))E = ω²E. Where the
+condensate is present, light below the gap is expelled; where it vanishes,
+light is trapped:
+
+- **PEC wall = infinite Higgs mass.** Trapped frequencies converge to the
+  cavity values as O(1/m).
+- **The mass gap protects topology.** Q = χ + N/2 holds for 91/91 trapped
+  modes but only 34% of untrapped ones.
+- **Vortices trap light.** For g = m₀ξ < 2.299, every vortex traps exactly
+  one photon mode: trapped modes = winding number L (0…6 checked). Above
+  that, atom-like shells fill (1s, 1p, 2s, 1d, …).
+
+```bash
+python experiments/higgs_study.py
+```
+
+Details, model limits and prior art: [`docs/HIGGS.md`](docs/HIGGS.md).
+
+---
+
 ## The God Tensor: What It Is and Why It Converged
 
 The God Tensor is built on the E ⇄ H duality. Every training cavity is
