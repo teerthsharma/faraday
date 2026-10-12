@@ -34,7 +34,13 @@ from faraday.em_solver import (
     CavityShape,
     solve_cavity_modes,
 )
-from faraday.god_tensor import GodTensor
+from faraday.god_tensor import (
+    GodTensor,
+    TrainingSample,
+    banach_step,
+    fixed_point_operator,
+    initial_vector,
+)
 from faraday.manifold_projector import ManifoldProjector, embed_fingerprint
 from faraday.predict import predict_eh_barcode
 
@@ -209,7 +215,6 @@ def run_validation_experiment(
     """
     rng = np.random.default_rng(seed)
     n_train = round(n_total * train_fraction)
-    n_total - n_train
 
     # ── Step 1: generate all geometries ──────────────────────────────
     all_params: list[tuple[tuple[float, ...], str]] = []
@@ -239,11 +244,11 @@ def run_validation_experiment(
             mode_data = solve_cavity_modes(
                 geom, nx=nx, ny=ny, num_modes=num_modes, seed=seed
             )
-        except Exception:
+        except Exception:  # pragma: no cover - degenerate geometry
             continue
 
-        e_field = np.array(next(iter(mode_data["e_modes"].values()))["field"])
-        h_field = np.array(next(iter(mode_data["h_modes"].values()))["field"])
+        e_field = np.array(mode_data["e_modes"]["mode_0"]["field"])
+        h_field = np.array(mode_data["h_modes"]["mode_0"]["field"])
         fp = coupled_fingerprint(e_field, h_field)
         if "error" in fp.get("e_fingerprint", {}) or "error" in fp.get(
             "h_fingerprint", {}
@@ -252,8 +257,6 @@ def run_validation_experiment(
 
         e_emb = embed_fingerprint(fp["e_fingerprint"], dim=50)
         h_emb = embed_fingerprint(fp["h_fingerprint"], dim=50)
-
-        from faraday.god_tensor import TrainingSample
 
         sample = TrainingSample(
             geometry_params=params,
@@ -289,11 +292,11 @@ def run_validation_experiment(
             mode_data = solve_cavity_modes(
                 geom, nx=nx, ny=ny, num_modes=num_modes, seed=seed
             )
-        except Exception:
+        except Exception:  # pragma: no cover - degenerate geometry
             continue
 
-        e_field = np.array(next(iter(mode_data["e_modes"].values()))["field"])
-        h_field = np.array(next(iter(mode_data["h_modes"].values()))["field"])
+        e_field = np.array(mode_data["e_modes"]["mode_0"]["field"])
+        h_field = np.array(mode_data["h_modes"]["mode_0"]["field"])
         actual = coupled_fingerprint(e_field, h_field)
         if "error" in actual.get("e_fingerprint", {}) or "error" in actual.get(
             "h_fingerprint", {}
@@ -421,8 +424,8 @@ def run_suite(
         ny=int(cfg["ny"]),  # type: ignore[call-overload,index]
         num_modes=int(cfg["num_modes"]),  # type: ignore[call-overload,index]
     )
-    e_field = np.array(next(iter(mode_data["e_modes"].values()))["field"])
-    h_field = np.array(next(iter(mode_data["h_modes"].values()))["field"])
+    e_field = np.array(mode_data["e_modes"]["mode_0"]["field"])
+    h_field = np.array(mode_data["h_modes"]["mode_0"]["field"])
 
     for _run in range(n_runs):
         r = run_benchmark(
@@ -535,6 +538,8 @@ def save_report(
 # Burn mode: 2M-epoch Banach fixed-point execution with per-epoch JSON logging
 # ---------------------------------------------------------------------------
 
+CHECKPOINT_EVERY = 10_000  # epochs between burn checkpoints
+
 
 def run_burn(
     *,
@@ -597,12 +602,9 @@ def run_burn(
         gt.collect_training_data(nx=nx, ny=ny, num_modes=num_modes, seed=seed)
         # ── Phase 2: Learn T matrix ─────────────────────────────────────────
         gt.learn_T()
-        # Initialise god_tensor from dominant eigenvector of T
-        eigenvalues, eigenvectors = np.linalg.eig(gt.T_matrix)  # type: ignore[arg-type]  # type: ignore[arg-type]
-        dists = np.abs(eigenvalues - 1.0)
-        best_idx = int(np.argmin(dists))
-        god_tensor = np.real(eigenvectors[:, best_idx])
-        god_tensor = god_tensor / (np.linalg.norm(god_tensor) + 1e-10)
+        # Start from a generic vector (not an eigenvector of T) so the burn
+        # shows the iteration contracting onto the fixed point
+        god_tensor = initial_vector(gt.T_matrix.shape[0])  # type: ignore[union-attr]
         gt.god_tensor = god_tensor
         rng = np.random.default_rng(seed)
         start_epoch = 0
@@ -623,41 +625,31 @@ def run_burn(
 
     # ── Phase 3: Banach fixed-point burn loop ────────────────────────────
     # x IS the god_tensor (current fixed-point estimate)
+    T = gt.T_matrix
+    assert T is not None
+    G, lam_star, q = fixed_point_operator(T)
+    burn_log.info("fixed_point_operator", eigenvalue=lam_star.real, contraction_factor=q)
     x = god_tensor.copy()
 
+    # Loop-invariant: training E latents pushed through T, row-normalised
+    e_latent = np.array([gt.projector_e.encode(s.e_embedding) for s in gt.samples])
+    e_under_T = e_latent @ T.T
+    e_under_T_n = e_under_T / (np.linalg.norm(e_under_T, axis=1, keepdims=True) + 1e-10)
+
     for epoch in range(start_epoch + 1, epochs + 1):
-        # Banach step: T(x) then normalise
-        x_new = gt.T_matrix @ x
-        norm = np.linalg.norm(x_new)
-        if norm > 1e-10:
-            x_new = x_new / norm
+        # Banach step: x → G(x), G the shifted-inverse contraction onto the
+        # eigenvector of T with eigenvalue nearest 1 (sign-aligned)
+        x_new, delta = banach_step(G, x)
 
-        # Sign-invariant delta (eigenvector is defined up to ±1)
-        sign_correction = 1.0 if np.dot(x_new, x) >= 0 else -1.0
-        delta = float(np.linalg.norm(x_new - sign_correction * x))
-
-        # Banach loss: ||T(x) - x||_2 after sign correction
+        # Banach loss: ||G(x) - x||_2
         banach_loss = delta
 
         # ── Betti errors ──────────────────────────────────────────────
-        # Project current eigenvector onto each training sample and compare
-        # predicted H topology against ground truth.
-        # Re-embed + compute fingerprint each epoch would be too slow for
-        # 2M iterations, so we use the manifold projection residual as
-        # a proxy for betti_0/1/2 errors — stable and differentiable.
-        # Reference betti values are the mean of the training set.
-        e_latent = np.array([gt.projector_e.encode(s.e_embedding) for s in gt.samples])
-        _ = np.array([gt.projector_h.encode(s.h_embedding) for s in gt.samples])
-
-        # Residual after one T application
-        e_under_T = e_latent @ gt.T_matrix.T  # type: ignore[union-attr]
-        e_under_T_n = e_under_T / (np.linalg.norm(e_under_T, axis=1, keepdims=True) + 1e-10)
-
-        # Compute per-sample "convergence signature" — normalised dot product
-        # with the current fixed-point estimate
-        sigs = np.array(
-            [float(np.dot(e_under_T_n[j], x)) for j in range(len(e_under_T_n))]
-        )
+        # Re-embedding + fingerprinting each epoch would be too slow for
+        # 2M iterations, so the alignment of the training set with the
+        # current fixed-point estimate is used as a proxy.
+        # Per-sample "convergence signature": |cos| with ±x (sign-invariant)
+        sigs = np.abs(e_under_T_n @ x)
 
         # Betti-0 error: deviation of mean signature from 1 (ideal fixed pt)
         betti_0_err = float(np.abs(1.0 - np.mean(sigs)))
@@ -683,7 +675,7 @@ def run_burn(
             print(json.dumps(line), flush=True)
 
         # Advance
-        x = sign_correction * x_new
+        x = x_new
 
         # Inject small noise to keep rank(T) full (deterministic seed schedule)
         if epoch % 50000 == 0:
@@ -691,8 +683,8 @@ def run_burn(
             x = x + noise
             x = x / (np.linalg.norm(x) + 1e-10)
 
-        # Save checkpoint every 10k epochs
-        if checkpoint_path is not None and epoch % 10_000 == 0:
+        # Save checkpoint every CHECKPOINT_EVERY epochs
+        if checkpoint_path is not None and epoch % CHECKPOINT_EVERY == 0:
             gt.god_tensor = x
             rng_state = rng.bit_generator.state  # type: ignore[assignment]
             gt.save_checkpoint(checkpoint_path, epoch, rng_state)

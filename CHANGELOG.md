@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- `em_solver`: the eigensolver skipped the fundamental mode and returned modes
+  in descending k (`mode_0` was the *highest* computed mode). The Laplacian is
+  now the symmetric Dirichlet operator on interior nodes, solved with
+  shift-invert `eigsh(sigma=0)`; modes are sorted ascending and match the
+  analytic TM_mn / Bessel-zero wave numbers. Circular cavities no longer crash
+  when `nx != ny`. H-field curl is vectorised and keeps the component signs.
+- `barcode`: Betti numbers dropped the essential class (a single blob had
+  Betti-0 = 0; |H| always scored 0). Betti counts now include infinite bars and
+  use a lattice-spacing noise threshold, so Betti-0 of E equals the nodal-domain
+  count. `topological_score` no longer becomes NaN without H1 bars.
+- `manifold_projector.fit`: backprop missed the decoder ReLU mask; the
+  gradient is now exact (finite-difference tested).
+- `god_tensor`: the fixed-point search seeded power iteration *on* an
+  eigenvector (a repelling fixed point) and reported convergence at iteration
+  0. It now runs a genuine Banach contraction (shifted inverse iteration onto
+  the eigenvalue nearest 1) from a generic start and records
+  `fixed_point_eigenvalue` and `contraction_factor`. H → E uses the
+  pseudo-inverse T⁺ instead of Tᵀ; God-score and distances are sign-invariant;
+  `GodTensor.predict` read a non-existent key and always returned `[]`.
+- `predict`: KNN compared `(w, h)` with `(r,)` via silent broadcasting and
+  could divide by zero for far queries; neighbours are now same-shape and the
+  kernel is underflow-safe.
+- CLI: `faraday solve` crashed, `faraday train` re-collected the dataset once
+  per geometry and could not save a model (`-o` added), `faraday-demo`
+  imported a module that did not exist (demo moved into `faraday.demo`).
+- `WaveSuperposer` added an H mode even when none was requested and ignored the
+  index passed to `add_h_mode`.
+- CI: the Generalization job's regex could never match the report's
+  `mean_E_err=… | mean_H_err=…` format.
+
+### Added
+- Physics/maths tests: analytic eigenvalues and O(h²) convergence, Maxwell
+  energy equipartition, nodal-domain Betti numbers, exact autoencoder gradient,
+  Banach contraction certification, CLI/config/burn coverage (coverage 89%).
+
 ## [0.1.0] — 2026-05-03
 
 ### Added

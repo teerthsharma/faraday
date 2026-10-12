@@ -14,12 +14,7 @@ config-show — Display the active configuration.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import click
-
-if TYPE_CHECKING:
-    pass
 
 from faraday.config import FaradayConfig
 
@@ -88,8 +83,8 @@ def solve(
     """
     Run the FDFD cavity solver for a given geometry.
 
-    Computes TE and TM eigenmodes and prints the first few resonant
-    frequencies (eigenvalues k²).
+    Computes TM eigenmodes and prints the resonant wave numbers k and
+    eigenvalues k², fundamental mode first.
 
     Example
     -------
@@ -108,11 +103,10 @@ def solve(
     click.echo(f"[faraday solve] geometry=({width} x {height}), nx={nx_val}, ny={ny_val}, modes={n_modes_val}")
 
     modes = solve_cavity_modes(geometry, nx=nx_val, ny=ny_val, num_modes=n_modes_val)
-    mode_list = list(modes.values())[: int(n_modes_val)]
 
-    click.echo(f"\nResonant frequencies (k²) for first {n_modes_val} modes:")
-    for i, m in enumerate(mode_list, 1):
-        click.echo(f"  mode {i}: k² = {m['eigenvalue']:.6f}")
+    click.echo(f"\nResonant wave numbers for first {modes['num_modes_found']} modes:")
+    for i, k in enumerate(modes["k_values"], 1):
+        click.echo(f"  mode {i}: k = {k:.6f}, k² = {k * k:.6f}")
 
 
 # ----------------------------------------------------------------------
@@ -130,6 +124,10 @@ def solve(
     help="Fixed-point iterations. Defaults to config value.",
 )
 @click.option(
+    "-o", "--output", "output_path", type=str, default=None,
+    help="Save the trained GodTensor to this pickle path (for `faraday predict -m`).",
+)
+@click.option(
     "-c", "--config", "config_path", type=str, default=None,
     help="Path to YAML config file.",
     callback=_resolve_config,
@@ -140,18 +138,18 @@ def train(
     ctx: click.Context,
     n_geometries: int | None,
     iters: int | None,
+    output_path: str | None,
     config_path: str | None,
 ) -> None:
     """
     Collect training data and train the God Tensor.
 
-    Runs FDFD across a sweep of random rectangular geometries,
-    builds barcodes, projects to manifold, and finds the fixed point
-    via God Tensor iteration.
+    Runs FDFD across a sweep of random cavity geometries, builds barcodes,
+    projects to manifold, learns T and finds the fixed point.
 
     Example
     -------
-    $ faraday train --n-geometries 30 --iters 100
+    $ faraday train --n-geometries 30 --iters 100 -o god_tensor.pkl
     """
     # Lazy import to avoid circular reference during package init
     from faraday import GodTensor
@@ -163,29 +161,20 @@ def train(
     click.echo(f"[faraday train] n_geometries={n_geo}, iters={iters_val}")
 
     gt = GodTensor(n_geometries=n_geo)
-
-    def _step() -> None:
-        pass
-
-    with click.progressbar(length=n_geo, label="Collecting training data") as bar:
-        def _progress() -> None:
-            bar.update(1)
-
-        # Collect data with default solver params
-        for i in range(n_geo):
-            try:
-                gt.collect_training_data(
-                    nx=cfg.solver.nx,
-                    ny=cfg.solver.ny,
-                    num_modes=cfg.solver.n_modes,
-                )
-            except Exception as e:
-                click.echo(f"Warning: sample {i} failed: {e}", err=True)
-            _progress()
-
-    click.echo("Training data collected. Finding fixed point...")
-    gt.find_fixed_point(iters=iters_val)
-    click.echo("Training complete.")
+    gt.collect_training_data(
+        nx=cfg.solver.nx,
+        ny=cfg.solver.ny,
+        num_modes=cfg.solver.n_modes,
+    )
+    click.echo(f"Collected {len(gt.samples)} samples. Finding fixed point...")
+    gt.find_fixed_point(iters=iters_val, tol=cfg.training.tol)
+    click.echo(
+        f"Training complete. converged={gt.fixed_point_converged}, "
+        f"god_score={gt.god_score():.4f}"
+    )
+    if output_path is not None:
+        gt.save(output_path)
+        click.echo(f"Saved model to {output_path}")
 
 
 # ----------------------------------------------------------------------
@@ -193,7 +182,7 @@ def train(
 # ----------------------------------------------------------------------
 
 
-@main.command()
+@main.command("predict")
 @click.option(
     "-w", "--width", type=float, required=True, help="Cavity width."
 )
@@ -382,9 +371,9 @@ def demo(config_path: str | None) -> None:
     $ faraday-demo
     """
     # Lazy import to avoid circular reference during package init
-    from faraday import demo as _demo_mod  # type: ignore[attr-defined]
+    from faraday.demo import main as _demo_main
 
-    _demo_mod.main()
+    _demo_main()
 
 
 if __name__ == "__main__":

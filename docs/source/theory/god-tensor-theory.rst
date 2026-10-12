@@ -73,15 +73,17 @@ Interpretation
 Banach Fixed-Point Iteration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Faraday finds :math:`\mathbf{g}` via iterative refinement:
+Faraday finds :math:`\mathbf{g}` via a Banach contraction (shifted inverse
+iteration, :math:`\mu \approx 1`):
 
 .. math::
 
-   \mathbf{x}_{n+1} = \frac{T \, \mathbf{x}_n}{\|T \, \mathbf{x}_n\|} = \text{normalize}(T \, \mathbf{x}_n)
+   \mathbf{x}_{n+1} = \text{normalize}\big((T - \mu I)^{-1} \mathbf{x}_n\big)
 
-This is the **power iteration** method for finding the dominant eigenvector.
-Normalization prevents magnitude blow-up. The iteration converges to the
-eigenspace of the largest singular value of :math:`T`. See :doc:`banach-fixed-point`
+It converges to the eigenvector whose eigenvalue is nearest 1 at rate
+:math:`q = |\lambda^* - \mu| / |\lambda_2 - \mu|`. Plain power iteration would
+instead converge to the eigenvector of the largest :math:`|\lambda|`, which is
+not :math:`\mathbf{g}` unless :math:`\lambda_{\max} = 1`. See :doc:`banach-fixed-point`
 for convergence theory.
 
 God Score

@@ -66,43 +66,60 @@ def field_to_pointcloud(
     return points
 
 
+def _betti(dgm: np.ndarray, noise_scale: float, persistence_factor: float) -> int:
+    """Count persistent classes in one diagram.
+
+    Essential classes (infinite death) always count — a single connected blob
+    has Betti-0 = 1, not 0. A finite bar counts when its lifetime exceeds
+    ``persistence_factor * noise_scale``.
+    """
+    if len(dgm) == 0:
+        return 0
+    lifetimes = dgm[:, 1] - dgm[:, 0]
+    essential = int(np.sum(~np.isfinite(lifetimes)))
+    finite = lifetimes[np.isfinite(lifetimes)]
+    return essential + int(np.sum(finite > persistence_factor * noise_scale))
+
+
 def compute_barcodes(
-    points: np.ndarray, max_dim: int = 1, metric: str = "euclidean"
+    points: np.ndarray,
+    max_dim: int = 1,
+    metric: str = "euclidean",
+    persistence_factor: float = 1.5,
 ) -> dict:
     """
     Compute persistent homology barcodes from field point cloud.
     Uses ripser for efficient computation.
 
+    Betti numbers count *persistent* classes. The noise scale is the median
+    finite H0 lifetime: on a sampled grid almost every point merges with its
+    nearest neighbour at the lattice spacing ``s``, so that median is ``s``.
+    Two regions separated by at least one missing grid line are ``>= 2s``
+    apart, hence the default ``persistence_factor = 1.5`` sits between the
+    noise floor and the first real gap.
+
     Args:
         points: (N, d) point cloud
         max_dim: maximum homology dimension to compute (H0, H1, H2...)
         metric: distance metric ('euclidean' or 'ripser' default)
+        persistence_factor: lifetime threshold in units of the noise scale
 
     Returns:
         dict with betti_0, betti_1, num_h0_bars, num_h1_bars, diagrams
     """
     try:
         from ripser import ripser
-    except ImportError:
+    except ImportError:  # pragma: no cover - ripser is a hard dependency
         return {"error": "ripser not installed — run: pip install ripser"}
 
     result = ripser(points, maxdim=max_dim, metric=metric)
     diagrams = result["dgms"]
 
-    betti = []
-    for _d, dgm in enumerate(diagrams):
-        if len(dgm) > 0:
-            lifetimes = dgm[:, 1] - dgm[:, 0]
-            lifetimes = lifetimes[np.isfinite(lifetimes)]
-            if len(lifetimes) > 0:
-                # Persistent features: bars significantly longer than median gap
-                threshold = np.median(lifetimes) if len(lifetimes) > 1 else 0
-                betti.append(len(lifetimes[lifetimes > threshold]))
-            else:
-                betti.append(0)
-        else:
-            betti.append(0)
+    h0_life = diagrams[0][:, 1] - diagrams[0][:, 0]
+    h0_finite = h0_life[np.isfinite(h0_life)]
+    noise_scale = float(np.median(h0_finite)) if len(h0_finite) else 0.0
 
+    betti = [_betti(dgm, noise_scale, persistence_factor) for dgm in diagrams]
     while len(betti) < 2:
         betti.append(0)
 
@@ -111,16 +128,19 @@ def compute_barcodes(
         "betti_1": betti[1],  # loops / holes
         "num_h0_bars": len(diagrams[0]),
         "num_h1_bars": len(diagrams[1]) if len(diagrams) > 1 else 0,
-        "h0_lifetimes": [
-            float(x) for x in (diagrams[0][:, 1] - diagrams[0][:, 0]) if not np.isinf(x)
-        ],
+        "h0_lifetimes": [float(x) for x in h0_finite],
         "h1_lifetimes": [
-            float(x) for x in (diagrams[1][:, 1] - diagrams[1][:, 0]) if not np.isinf(x)
+            float(x) for x in (diagrams[1][:, 1] - diagrams[1][:, 0]) if np.isfinite(x)
         ]
         if len(diagrams) > 1
         else [],
         "diagrams": [dgm.tolist() for dgm in diagrams],
     }
+
+
+def _mean(values: list[float]) -> float:
+    """Mean that is 0.0 (not NaN) for an empty list."""
+    return float(np.mean(values)) if len(values) else 0.0
 
 
 def topological_fingerprint(field: np.ndarray, threshold: float = 0.1) -> dict:
@@ -159,10 +179,9 @@ def topological_fingerprint(field: np.ndarray, threshold: float = 0.1) -> dict:
         "confinement_ratio": confinement_ratio,
         "num_grid_points": int(np.sum(mag > threshold * mag.max())),
         # Topological score: more holes with longer lifetimes = higher score
-        "topological_score": float(
-            barcodes.get("betti_1", 0) * np.mean(barcodes.get("h1_lifetimes", [0]))
-            + barcodes.get("betti_0", 0) * np.mean(barcodes.get("h0_lifetimes", [0]))
-        ),
+        "topological_score": barcodes.get("betti_1", 0)
+        * _mean(barcodes.get("h1_lifetimes", []))
+        + barcodes.get("betti_0", 0) * _mean(barcodes.get("h0_lifetimes", [])),
         "diagrams": barcodes.get("diagrams", []),
     }
 
@@ -202,21 +221,10 @@ def coupled_fingerprint(
     h_pts = field_to_pointcloud(h_field, threshold, add_phase=False)  # (x, y, |H|)
 
     if len(e_pts) >= 5 and len(h_pts) >= 5:
-        try:
-            from scipy.stats import wasserstein_distance_nd
+        from scipy.stats import wasserstein_distance
 
-            # EMD between |E| and |H| distributions (project to 1D for simplicity)
-            e_flat = e_pts[:, 2]  # |E| values
-            h_flat = h_pts[:, 2]  # |H| values
-            # Sort for 1D EMD
-            e_sorted = np.sort(e_flat)
-            h_sorted = np.sort(h_flat)
-            emd_S = float(wasserstein_distance_nd(e_sorted, h_sorted))
-        except Exception:
-            # Fallback: normalized L2 between mean field distributions
-            e_hist = np.histogram(e_mag[e_mag > 0], bins=20, density=True)[0]
-            h_hist = np.histogram(h_mag[h_mag > 0], bins=20, density=True)[0]
-            emd_S = float(np.linalg.norm(e_hist - h_hist))
+        # 1-D EMD between the normalised |E| and |H| amplitude distributions
+        emd_S = float(wasserstein_distance(e_pts[:, 2], h_pts[:, 2]))
     else:
         emd_S = 0.0
 
