@@ -2,6 +2,8 @@
 
 **Invented by [Teerth Sharma](https://teerthsharma.vercel.app/) · [github.com/teerthsharma/faraday](https://github.com/teerthsharma/faraday)**
 
+<p align="center"><a href="https://teerth.blog/faraday"><b>Read the essay at teerth.blog/faraday</b></a> &nbsp;·&nbsp; the maths, the proofs and live figures</p>
+
 > ⚡ *Faraday learns a reduced-order topological operator on FDFD-derived electromagnetic fingerprints — a Banach-fixed coupling tensor that converges to machine epsilon.*
 
 ```bash
