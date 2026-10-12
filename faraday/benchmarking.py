@@ -36,10 +36,10 @@ from faraday.em_solver import (
 )
 from faraday.god_tensor import (
     GodTensor,
-    TrainingSample,
     banach_step,
     fixed_point_operator,
     initial_vector,
+    make_sample,
 )
 from faraday.manifold_projector import ManifoldProjector, embed_fingerprint
 from faraday.predict import predict_eh_barcode
@@ -241,32 +241,13 @@ def run_validation_experiment(
             geom = CavityGeometry(shape=CavityShape.CIRCULAR, dims=params)
 
         try:
-            mode_data = solve_cavity_modes(
-                geom, nx=nx, ny=ny, num_modes=num_modes, seed=seed
+            sample = make_sample(
+                geom, params, nx, ny, num_modes, gt.signature_modes, seed=seed
             )
         except Exception:  # pragma: no cover - degenerate geometry
             continue
-
-        e_field = np.array(mode_data["e_modes"]["mode_0"]["field"])
-        h_field = np.array(mode_data["h_modes"]["mode_0"]["field"])
-        fp = coupled_fingerprint(e_field, h_field)
-        if "error" in fp.get("e_fingerprint", {}) or "error" in fp.get(
-            "h_fingerprint", {}
-        ):
-            continue
-
-        e_emb = embed_fingerprint(fp["e_fingerprint"], dim=50)
-        h_emb = embed_fingerprint(fp["h_fingerprint"], dim=50)
-
-        sample = TrainingSample(
-            geometry_params=params,
-            e_fingerprint=fp["e_fingerprint"],
-            h_fingerprint=fp["h_fingerprint"],
-            e_embedding=e_emb,
-            h_embedding=h_emb,
-            k_values=mode_data["k_values"],
-        )
-        gt.samples.append(sample)
+        if sample is not None:
+            gt.samples.append(sample)
 
     if len(gt.samples) < 5:
         raise RuntimeError(
@@ -611,7 +592,7 @@ def run_burn(
     else:
         # Load checkpoint: restore god_tensor, epoch, RNG state
         god_tensor, start_epoch, rng_state = GodTensor.load_checkpoint(checkpoint_path)  # type: ignore[arg-type]
-        # Reconstruct gt for Betti computation (need samples + T + projectors)
+        # Reconstruct gt for Betti computation (need samples + T)
         # We reload from the full GodTensor pickle (the full object, not just npz)
         gt_path = str(checkpoint_path).replace(".npz", "_gt.pkl")
         try:
@@ -631,9 +612,9 @@ def run_burn(
     burn_log.info("fixed_point_operator", eigenvalue=lam_star.real, contraction_factor=q)
     x = god_tensor.copy()
 
-    # Loop-invariant: training E latents pushed through T, row-normalised
-    e_latent = np.array([gt.projector_e.encode(s.e_embedding) for s in gt.samples])
-    e_under_T = e_latent @ T.T
+    # Loop-invariant: training E-view signatures pushed through T, row-normalised
+    e_view = np.array([s.e_embedding for s in gt.samples])
+    e_under_T = e_view @ T.T
     e_under_T_n = e_under_T / (np.linalg.norm(e_under_T, axis=1, keepdims=True) + 1e-10)
 
     for epoch in range(start_epoch + 1, epochs + 1):

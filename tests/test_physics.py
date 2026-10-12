@@ -317,6 +317,7 @@ class TestTrainedGodTensor:
         x = gt.god_tensor
         assert np.linalg.norm(x) == pytest.approx(1.0)
         np.testing.assert_allclose(gt.T_matrix @ x, lam * x, atol=1e-8)
+        assert gt.distance_to_god(x) == pytest.approx(0.0, abs=1e-6)
 
     def test_converges_from_generic_start(self, trained_gt):
         """History starts with a real step, not a pre-converged eigenvector."""
@@ -340,8 +341,7 @@ class TestTrainedGodTensor:
     def test_h_to_e_uses_pseudo_inverse(self, trained_gt):
         gt = trained_gt
         h_emb = gt.samples[0].h_embedding
-        z = gt.projector_h.encode(h_emb)
-        expected = np.linalg.pinv(gt.T_matrix) @ z
+        expected = np.linalg.pinv(gt.T_matrix) @ h_emb
         expected /= np.linalg.norm(expected) + 1e-10
         np.testing.assert_allclose(gt.get_h_to_e_map(h_emb), expected)
 
