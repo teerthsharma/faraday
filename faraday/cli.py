@@ -235,6 +235,62 @@ def predict_cmd(
 
 
 # ----------------------------------------------------------------------
+# topology
+# ----------------------------------------------------------------------
+
+
+@main.command()
+@click.option("-w", "--width", type=float, default=2.0, help="Rectangle width.")
+@click.option("-h", "--height", type=float, default=1.0, help="Rectangle height.")
+@click.option(
+    "-r", "--radius", type=float, default=None,
+    help="Solve a circular cavity of this radius instead of a rectangle.",
+)
+@click.option("-n", "--n-modes", "n_modes", type=int, default=6, help="Modes to analyse.")
+@click.option("--nx", type=int, default=101, help="Grid points per axis.")
+def topology(
+    width: float, height: float, radius: float | None, n_modes: int, nx: int
+) -> None:
+    """
+    Show the E ⇄ H topological duality of each cavity mode.
+
+    For every mode: nodal domains of E, wall nodal points N_wall, H vortices,
+    and whether the bulk-boundary law Q = χ(D) + N_wall/2 and the domain law
+    charge(Ω) = χ(Ω) hold. For rectangles the geometry-only prediction is
+    shown alongside.
+
+    Example
+    -------
+    $ faraday topology -w 2 -h 1 -n 8
+    """
+    from faraday import CavityGeometry, CavityShape, solve_cavity_modes
+    from faraday.duality import mode_topology, predict_rectangle_topology
+
+    if radius is not None:
+        geom = CavityGeometry(shape=CavityShape.CIRCULAR, dims=(radius,))
+        predicted = None
+    else:
+        geom = CavityGeometry(shape=CavityShape.RECTANGULAR, dims=(width, height))
+        predicted = predict_rectangle_topology(width, height, n_modes)
+    modes = solve_cavity_modes(geom, nx=nx, ny=nx, num_modes=n_modes, seed=0)
+
+    click.echo(" mode       k  domains  N_wall  vort+  vort-   Q   laws  predicted Q")
+    for j in range(modes["num_modes_found"]):
+        t = mode_topology(modes, j)
+        laws = "✓" if t.boundary_law_holds and t.domain_law_holds else "✗"
+        pred = "-"
+        if predicted:
+            p = predicted[j]
+            pred = f"{p['charge']} (m,n)={p['mn']}"
+            if p["gap"] < 5e-3:
+                pred += "  near-degenerate: order may swap"
+        click.echo(
+            f" {j:4d} {t.k:7.3f} {t.n_domains:8d} {t.n_wall:7d} {t.vortices:6d}"
+            f" {t.antivortices:6d} {t.charge:3d}   {laws:4s}  {pred}"
+        )
+
+
+# ----------------------------------------------------------------------
 # config-show
 # ----------------------------------------------------------------------
 

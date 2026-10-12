@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — topological E ⇄ H duality
+- `faraday.duality`: exact vortex charges of H (discrete Stokes), nodal
+  domains and Euler characteristics, wall nodal count, the `ModeTopology`
+  signature, geometry-only `predict_rectangle_topology` and
+  `discover_coupling`. The bulk–boundary law Q = χ(D) + N_wall/2 and the
+  domain law charge(Ω) = χ(Ω) hold on 132/132 modes of 11 cavities (χ = +1,
+  0, −1). See `docs/DUALITY.md`.
+- `em_solver.solve_interior_modes`: TM modes of any cavity given as a grid
+  mask (non-convex, with holes); `solve_cavity_modes` delegates to it.
+- `faraday topology` CLI command and `experiments/duality_study.py`.
+
 ### Fixed
 - `em_solver`: the eigensolver skipped the fundamental mode and returned modes
   in descending k (`mode_0` was the *highest* computed mode). The Laplacian is
