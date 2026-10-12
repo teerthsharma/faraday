@@ -4,26 +4,32 @@
 """
 faraday.god_tensor — The Fixed Point of E ⇄ H
 
-The God Tensor is the fixed point of the E-H co-determination operator.
-Given E_signature and H_signature from the same cavity mode:
+Every training geometry is described twice, by two fields that never see
+each other:
 
-    T(E_sig)  -> H_sig
-    T⁺(H_sig) -> E_sig
+    E-view_j = χ(D) + N_wall_j / 2   from E alone (its nodal points on the wall)
+    H-view_j = Q_j                   from H alone (net vortex winding)
 
-The invariant is T x* = x*: the eigenvector of T with eigenvalue nearest 1,
-reached by a Banach contraction (shifted inverse iteration) from a generic
-start vector.
+for its first ``signature_modes`` TM modes j. The coupling T is learned by
+least squares, T e_i ≈ h_i. The bulk-boundary law of :mod:`faraday.duality`
+says the two views are equal, so the minimum-norm T is the orthogonal
+projector onto the subspace of physically realisable signatures:
 
-At convergence: x* = God Tensor
-The God Tensor IS the unified field — it captures the invariant
-that E and H mutually encode about each other.
+    T(T(x)) = T(x)        (idempotent; eigenvalues 1 and 0)
+
+The God Tensor is that fixed subspace — every signature a real cavity can
+produce is left unchanged by E → H → E. It is reached by a Banach
+contraction (shifted inverse iteration) from a generic start vector and
+certified by the idempotency defect ||T² - T|| / ||T||, the multiplicity of
+λ* = 1 and the contraction factor q. A violation of the duality law in the
+data (e.g. an under-resolved grid) shows up as T drifting from a projector.
 
 Usage
 -----
-    gt = GodTensor(n_geometries=100)
-    gt.collect_training_data(nx=40, ny=40)   # generate E, H field datasets
-    gt.find_fixed_point(iters=500, tol=1e-6)  # converge to God Tensor
-    pred = gt.predict(w=2.0, h=1.5)           # predict for new geometry
+    gt = GodTensor(n_geometries=50)
+    gt.collect_training_data(nx=40, ny=40)    # FDFD → duality signatures
+    gt.find_fixed_point(iters=500, tol=1e-7)  # learn T, contract onto x*
+    gt.summary()["idempotency_defect"]        # ≈ 0 when the law holds
 """
 
 from __future__ import annotations
@@ -36,9 +42,9 @@ import numpy as np
 
 from faraday._types import ModeData
 from faraday.barcode import coupled_fingerprint
+from faraday.duality import euler_characteristic, vortex_charges, wall_nodal_count
 from faraday.em_solver import CavityGeometry, CavityShape, solve_cavity_modes
 from faraday.logging import get_logger
-from faraday.manifold_projector import ManifoldProjector, embed_fingerprint
 
 log = get_logger(__name__)
 
@@ -59,37 +65,57 @@ def initial_vector(dim: int, seed: int = 0) -> np.ndarray:
     return x / np.linalg.norm(x)
 
 
+def _nearest_cluster(
+    eigenvalues: np.ndarray, mu: float, scale: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """Order eigenvalues by distance to mu; mask the cluster nearest to it.
+
+    The cluster holds every eigenvalue within 1e-5·||T|| of the nearest one,
+    so an exactly or nearly degenerate λ* (e.g. T a projector learned from
+    data that obeys the duality law up to a few grid-limited modes) is one
+    fixed subspace rather than a tie. The tolerance sits above the inverse
+    iteration shift ε = 1e-6·||T||: eigenvalues closer than that cannot be
+    separated by the iteration anyway.
+    """
+    dist = np.abs(eigenvalues - mu)
+    return dist, dist <= dist.min() + 1e-5 * scale
+
+
 def fixed_point_operator(
     T: np.ndarray, target: float = 1.0
 ) -> tuple[Callable[[np.ndarray], np.ndarray], complex, float]:
-    """Build the Banach contraction whose fixed point solves T x = λ* x, λ* ≈ 1.
+    """Build the Banach contraction whose fixed points solve T x = λ* x, λ* ≈ 1.
 
-    The God Tensor is the invariant of the coupling, T g = g, i.e. the
-    eigenvector whose eigenvalue λ* is nearest ``target`` = 1. Plain power
-    iteration x → Tx/||Tx|| cannot find it: it only ever converges to the
-    eigenvector of largest |λ|, and a learned T need not have λ_max = 1.
-    Shifted inverse iteration can:
+    The God Tensor is the invariant of the coupling, T g = g: the eigenspace
+    whose eigenvalue λ* is nearest ``target`` = 1. Plain power iteration
+    x → Tx/||Tx|| cannot find it: it only converges to the eigenvector of
+    largest |λ|. Shifted inverse iteration can:
 
         G(x) = (T - μI)⁻¹ x / ||(T - μI)⁻¹ x||,   μ = target + ε
 
-    The eigenvalues of (T - μI)⁻¹ are 1/(λ_j - μ), so the eigenvector with λ
+    The eigenvalues of (T - μI)⁻¹ are 1/(λ_j - μ), so the eigenspace with λ
     nearest μ dominates and G contracts onto it with Lipschitz factor
-    q = |λ* - μ| / |λ₂ - μ| < 1 (λ₂ = next-nearest eigenvalue). ε = 1e-6·||T||
-    keeps T - μI invertible when λ* = 1 exactly; it only makes q smaller.
+    q = |λ* - μ| / |λ₂ - μ| < 1, λ₂ the nearest eigenvalue outside that
+    eigenspace. An exactly degenerate λ* (multiplicity > 1) is one fixed
+    subspace, not a tie. ε = 1e-6·||T|| keeps T - μI invertible when λ* = 1
+    exactly; it only makes q smaller.
 
     Returns:
-        (G, λ*, q). q = 1 means no contraction: the eigenvalue nearest the
-        target is a complex pair (no real fixed point) or a tie.
+        (G, λ*, q). q = 1 means no contraction: λ* is complex (no real fixed
+        point) or every eigenvalue is equally near the target.
     """
     from scipy.linalg import lu_factor, lu_solve
 
     n = T.shape[0]
-    mu = target + 1e-6 * max(1.0, float(np.linalg.norm(T, 2)))
+    scale = max(1.0, float(np.linalg.norm(T, 2)))
+    mu = target + 1e-6 * scale
     eigenvalues = np.linalg.eigvals(T)
-    dist = np.abs(eigenvalues - mu)
-    order = np.argsort(dist)
-    lam_star = complex(eigenvalues[order[0]])
-    q = float(dist[order[0]] / dist[order[1]]) if n > 1 else 0.0
+    dist, cluster = _nearest_cluster(eigenvalues, mu, scale)
+    lam_star = complex(eigenvalues[int(np.argmin(dist))])
+    if abs(lam_star.imag) > 1e-8 * scale or cluster.all():
+        q = 1.0
+    else:
+        q = float(dist[cluster].max() / dist[~cluster].min())
 
     lu = lu_factor(T - mu * np.eye(n))
 
@@ -97,6 +123,22 @@ def fixed_point_operator(
         return lu_solve(lu, x)
 
     return G, lam_star, q
+
+
+def fixed_point_basis(T: np.ndarray, target: float = 1.0) -> np.ndarray:
+    """Orthonormal basis (columns) of the eigenspace of T nearest ``target``.
+
+    The eigenspace of the cluster around λ* (multiplicity m) is the near-null
+    space of T - λ*I: its m smallest right singular vectors. This is
+    orthonormal and exactly m-dimensional by construction; eigenvectors from
+    ``np.linalg.eig`` are ill-conditioned inside a degenerate eigenspace.
+    """
+    scale = max(1.0, float(np.linalg.norm(T, 2)))
+    eigenvalues = np.linalg.eigvals(T)
+    dist, cluster = _nearest_cluster(eigenvalues, target + 1e-6 * scale, scale)
+    lam = float(np.real(eigenvalues[int(np.argmin(dist))]))
+    _, _, vh = np.linalg.svd(T - lam * np.eye(T.shape[0]))
+    return vh[-int(cluster.sum()) :].T
 
 
 def banach_step(
@@ -124,6 +166,65 @@ def sign_invariant_distance(a: np.ndarray, x: np.ndarray) -> np.ndarray:
     )
 
 
+def duality_views(mode_data: ModeData, num_modes: int) -> tuple[np.ndarray, np.ndarray]:
+    """E-view and H-view charge signatures of the first ``num_modes`` modes.
+
+    ``E-view_j = χ(D) + N_wall_j / 2`` uses only E (and the cavity's shape);
+    ``H-view_j = Q_j`` uses only H. The bulk-boundary law says they are equal.
+    Modes beyond those solved are 0 in both views.
+    """
+    interior = np.array(mode_data["interior"], dtype=bool)
+    chi = euler_characteristic(interior)
+    e_view = np.zeros(num_modes)
+    h_view = np.zeros(num_modes)
+    for j in range(min(num_modes, mode_data["num_modes_found"])):
+        key = f"mode_{j}"
+        e = np.array(mode_data["e_modes"][key]["field"])
+        hx = np.array(mode_data["h_modes"][key]["hx"])
+        hy = np.array(mode_data["h_modes"][key]["hy"])
+        e_view[j] = chi + wall_nodal_count(e, interior) / 2
+        h_view[j] = vortex_charges(hx, hy, interior).sum()
+    return e_view, h_view
+
+
+def make_sample(
+    geom: CavityGeometry,
+    params: tuple[float, ...],
+    nx: int,
+    ny: int,
+    num_modes: int,
+    signature_modes: int,
+    seed: int | None = None,
+    fingerprint_threshold: float = 0.1,
+) -> TrainingSample | None:
+    """Solve one cavity and build its training sample (None if unusable).
+
+    The fundamental mode's barcode fingerprints feed the KNN predictor; the
+    duality signatures of the first ``signature_modes`` modes feed T.
+    """
+    mode_data = solve_cavity_modes(
+        geom, nx=nx, ny=ny, num_modes=max(num_modes, signature_modes), seed=seed
+    )
+    if "mode_0" not in mode_data["e_modes"]:
+        return None
+    fp = coupled_fingerprint(
+        np.array(mode_data["e_modes"]["mode_0"]["field"]),
+        np.array(mode_data["h_modes"]["mode_0"]["field"]),
+        threshold=fingerprint_threshold,
+    )
+    if "error" in fp["e_fingerprint"] or "error" in fp["h_fingerprint"]:
+        return None
+    e_view, h_view = duality_views(mode_data, signature_modes)
+    return TrainingSample(
+        geometry_params=params,
+        e_fingerprint=fp["e_fingerprint"],
+        h_fingerprint=fp["h_fingerprint"],
+        e_embedding=e_view,
+        h_embedding=h_view,
+        k_values=mode_data["k_values"],
+    )
+
+
 @dataclass
 class TrainingSample:
     """One training sample: a geometry + its E and H field signatures."""
@@ -131,8 +232,8 @@ class TrainingSample:
     geometry_params: tuple[float, ...]  # e.g. (w, h) or (r,)
     e_fingerprint: dict[str, Any]
     h_fingerprint: dict[str, Any]
-    e_embedding: np.ndarray  # manifold embedding of E fingerprint
-    h_embedding: np.ndarray  # manifold embedding of H fingerprint
+    e_embedding: np.ndarray  # E-view duality signature (χ + N_wall/2 per mode)
+    h_embedding: np.ndarray  # H-view duality signature (vortex charge per mode)
     k_values: list[float]  # cavity eigenmode wave numbers
 
     def to_dict(self) -> dict:
@@ -163,27 +264,25 @@ class GodTensor:
     The God Tensor: fixed point of E ⇄ H co-determination.
 
     Learn T such that:
-        T(e) ≈ h   (E encodes H)
-        T⁺(h) ≈ e  (H encodes E)
-        T(x*) = x*  [fixed point — the invariant; eigenvalue nearest 1]
+        T(e) ≈ h    (E's wall data encodes H's vortex charge)
+        T⁺(h) ≈ e   (H encodes E)
+        T(x*) = x*  [fixed subspace — the invariant; eigenvalue 1]
 
-    This fixed point T is the God Tensor — it IS the unified field.
+    When the duality law holds T is an orthogonal projector, T² = T, and the
+    God Tensor is its range: the subspace of realisable charge signatures.
     """
 
     n_geometries: int = 50
+    signature_modes: int = 16
     samples: list[TrainingSample] = field(default_factory=list)
-    projector_e: ManifoldProjector = field(
-        default_factory=lambda: ManifoldProjector(input_dim=50, latent_dim=16)
-    )
-    projector_h: ManifoldProjector = field(
-        default_factory=lambda: ManifoldProjector(input_dim=50, latent_dim=16)
-    )
     T_matrix: np.ndarray | None = field(default=None, repr=False)
     god_tensor: np.ndarray | None = field(default=None, repr=False)
+    god_basis: np.ndarray | None = field(default=None, repr=False)
     fixed_point_converged: bool = False
     convergence_history: list[dict] = field(default_factory=list)
     fixed_point_eigenvalue: complex | None = None
     contraction_factor: float | None = None
+    idempotency_defect: float | None = None
 
     def collect_training_data(
         self,
@@ -196,11 +295,13 @@ class GodTensor:
         Generate training dataset: varied cavity geometries with E and H fields.
 
         Samples random (w, h) rectangles and (r,) circles, solves the cavity
-        modes for each, computes topological fingerprints and embeddings.
+        modes for each, and records the fundamental mode's barcode
+        fingerprints and the E-view / H-view duality signatures.
 
         Args:
             nx, ny: grid resolution
-            num_modes: number of eigenmodes to compute per geometry
+            num_modes: eigenmodes to solve per geometry (at least
+                ``signature_modes`` are always solved)
             seed: random seed for reproducibility
         """
         rng = np.random.default_rng(seed)
@@ -219,43 +320,22 @@ class GodTensor:
                 geom = CavityGeometry(shape=CavityShape.CIRCULAR, dims=(r,))
                 params = (r,)
 
-            # Solve cavity modes
             try:
-                mode_data = solve_cavity_modes(
-                    geom, nx=nx, ny=ny, num_modes=num_modes, seed=seed
+                sample = make_sample(
+                    geom,
+                    params,
+                    nx,
+                    ny,
+                    num_modes,
+                    self.signature_modes,
+                    seed=seed,
+                    fingerprint_threshold=0.05,
                 )
-            except Exception as e:
+            except Exception as e:  # pragma: no cover - degenerate geometry
                 log.warning("geometry_solve_failed", params=params, error=str(e))
                 continue
-
-            # Use the dominant (lowest k) mode for fingerprinting
-            mode_key = "mode_0"
-            if mode_key not in mode_data["e_modes"]:
+            if sample is None:
                 continue
-
-            e_field = np.array(mode_data["e_modes"][mode_key]["field"])
-            h_field = np.array(mode_data["h_modes"][mode_key]["field"])
-
-            # Coupled fingerprint
-            fp = coupled_fingerprint(e_field, h_field, threshold=0.05)
-            e_fp = fp["e_fingerprint"]
-            h_fp = fp["h_fingerprint"]
-
-            if "error" in e_fp or "error" in h_fp:
-                continue
-
-            # Embeddings
-            e_emb = embed_fingerprint(e_fp, dim=50)
-            h_emb = embed_fingerprint(h_fp, dim=50)
-
-            sample = TrainingSample(
-                geometry_params=params,
-                e_fingerprint=e_fp,
-                h_fingerprint=h_fp,
-                e_embedding=e_emb,
-                h_embedding=h_emb,
-                k_values=mode_data["k_values"],
-            )
             self.samples.append(sample)
 
             log.info("sample_collected", i=i, params=params, valid=len(self.samples))
@@ -266,69 +346,63 @@ class GodTensor:
 
     def learn_T(self) -> np.ndarray:
         """
-        Learn the coupling operator T: E_embedding <-> H_embedding.
+        Learn the coupling operator T: E-view → H-view.
 
-        T is a matrix such that:
-            T @ e_emb ≈ h_emb   (for most samples)
-
-        Solved via least squares: T = H @ E^+  (H = stacked h_emb, E = stacked e_emb)
-        The pseudoinverse handles the overdetermined case.
+        Minimum-norm least squares T = H Eᵀ⁺ over the stacked signatures. When
+        every sample obeys the duality law (H = E), T is the orthogonal
+        projector onto the span of the signatures, so T² = T exactly; the
+        relative idempotency defect ||T² - T|| / ||T|| measures how far the
+        data departs from the law.
 
         Returns:
-            T: (latent_dim, latent_dim) coupling matrix
+            T: (signature_modes, signature_modes) coupling matrix
         """
         if len(self.samples) < 2:
             raise ValueError("Need at least 2 training samples")
 
-        E = np.array([s.e_embedding for s in self.samples])  # (n, 50)
-        H = np.array([s.h_embedding for s in self.samples])  # (n, 50)
+        E = np.array([s.e_embedding for s in self.samples])
+        H = np.array([s.h_embedding for s in self.samples])
 
-        # Train manifold projectors on the data before encoding
-        log.info("training_manifold_projector_e", samples=len(E))
-        self.projector_e.fit([s.e_embedding for s in self.samples], epochs=100, batch_size=8, verbose=False)
-        log.info("training_manifold_projector_h", samples=len(H))
-        self.projector_h.fit([s.h_embedding for s in self.samples], epochs=100, batch_size=8, verbose=False)
-
-        # First project to latent space
-        E_latent = np.array([self.projector_e.encode(e) for e in E])
-        H_latent = np.array([self.projector_h.encode(h) for h in H])
-
-        # Solve T @ E_latent.T ≈ H_latent.T via least squares
-        # T @ E_latent.T = H_latent.T  →  T @ E_latent.T @ E_latent = H_latent.T @ E_latent
-        # →  T = H_latent.T @ E_latent @ (E_latent.T @ E_latent)^-1
-        # Using lstsq for numerical stability: T @ E_latent = H_latent
-        from scipy.linalg import lstsq
-
-        T_raw, _residuals, _rank, _s = lstsq(E_latent, H_latent)  # type: ignore[assignment]
-        T = T_raw.T  # (latent, latent)
-
+        X, *_, rank, _ = np.linalg.lstsq(E, H, rcond=None)
+        T = X.T
         self.T_matrix = T
-        # Verify: T @ e should reconstruct h
-        H_recon = E_latent @ T.T
-        error = float(np.mean(np.abs(H_recon - H_latent)))
 
-        log.info("t_matrix_learned", shape=T.shape, rank=_rank)
-        log.info("t_reconstruction_error", error=error)
-
+        norm = float(np.linalg.norm(T))
+        self.idempotency_defect = (
+            float(np.linalg.norm(T @ T - T)) / norm if norm > 0 else 0.0
+        )
+        law_violations = int(np.sum(np.any(np.abs(E - H) > 1e-9, axis=1)))
+        log.info(
+            "t_matrix_learned",
+            shape=T.shape,
+            rank=int(rank),
+            idempotency_defect=self.idempotency_defect,
+            reconstruction_error=float(np.mean(np.abs(E @ T.T - H))),
+            samples_violating_law=law_violations,
+        )
         return T
 
     def find_fixed_point(self, iters: int = 500, tol: float = 1e-7) -> np.ndarray:
         """
-        Find the God Tensor: the fixed point x* of the coupling, T x* = λ* x*
-        with λ* the eigenvalue of T nearest 1 (exactly T x* = x* when λ* = 1).
+        Find the God Tensor: the fixed subspace of the coupling, T x = λ* x
+        with λ* the eigenvalue of T nearest 1 (exactly T x = x when λ* = 1).
 
         Found by Banach iteration of the contraction G (shifted inverse
         iteration, see :func:`fixed_point_operator`) from a generic start
-        vector, so convergence is earned, not assumed. Certified by:
+        vector, so convergence is earned, not assumed. ``god_tensor`` is the
+        fixed point reached; ``god_basis`` spans the whole fixed subspace
+        (its dimension is the multiplicity of λ*). Certified by:
 
         - ``fixed_point_eigenvalue``: λ*
         - ``contraction_factor``: Lipschitz constant q of G (< 1 ⇒ Banach)
+        - ``idempotency_defect``: ||T² - T|| / ||T|| (0 ⇔ T is a projector)
         - logged ``eigen_residual`` ||T x - λ* x|| and ``fixed_point_defect``
           ||T x - x|| = |λ* - 1|
 
         Args:
             iters: max iterations of G
-            tol: convergence tolerance on the sign-invariant step ||x_{n+1} - x_n||
+            tol: convergence tolerance on the sign-invariant step
+                ||x_{n+1} - x_n|| or the eigen-residual ||T x - λ* x||
 
         Returns:
             god_tensor: the unit-norm fixed point x*
@@ -342,13 +416,15 @@ class GodTensor:
         G, lam_star, q = fixed_point_operator(T)
         self.fixed_point_eigenvalue = lam_star
         self.contraction_factor = q
+        self.god_basis = fixed_point_basis(T)
 
         log.info(
             "fixed_point_operator",
             eigenvalue=lam_star.real,
             eigenvalue_imag=lam_star.imag,
+            multiplicity=self.god_basis.shape[1],
             contraction_factor=q,
-            latent_dim=T.shape[0],
+            dim=T.shape[0],
         )
 
         self.convergence_history = []
@@ -357,9 +433,15 @@ class GodTensor:
         delta = float("inf")
         for i in range(iters):
             x, delta = banach_step(G, x)
-            self.convergence_history.append({"iter": i, "delta": delta})
-            if delta < tol:
-                log.info("fixed_point_converged", iter=i, delta=delta)
+            # A degenerate λ* has neutral directions: the iterate drifts inside
+            # the fixed subspace at the solver's noise floor, so stop on the
+            # eigen-residual as well as on the step.
+            residual = float(np.linalg.norm(T @ x - lam_star.real * x))
+            self.convergence_history.append(
+                {"iter": i, "delta": delta, "residual": residual}
+            )
+            if delta < tol or residual < tol:
+                log.info("fixed_point_converged", iter=i, delta=delta, residual=residual)
                 self.fixed_point_converged = True
                 break
             if (i + 1) % 100 == 0:
@@ -378,8 +460,8 @@ class GodTensor:
         eigen_residual = float(np.linalg.norm(Tx - lam_star.real * x))
         fixed_point_defect = float(np.linalg.norm(Tx - x))
 
-        # How close E and H land to the fixed point under T
-        e_dist, h_dist = self._distances_to_god(x)
+        # How close E and H land to the fixed subspace under T
+        e_dist, h_dist = self._distances_to_god()
 
         log.info(
             "fixed_point_verified",
@@ -391,61 +473,64 @@ class GodTensor:
 
         return x
 
-    def _distances_to_god(self, god: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """Sign-invariant distances of normalised T(e_i), T(h_i) to ±god."""
+    def distance_to_god(self, v: np.ndarray) -> np.ndarray:
+        """Distance of the direction(s) ``v`` to the fixed subspace (sign-invariant).
+
+        ``sqrt(1 - ||Bᵀu||²)`` for u = v/||v|| and an orthonormal basis B: 0
+        inside the subspace, 1 orthogonal to it (and for a zero vector).
+        """
+        basis = self.god_basis
+        if basis is None:
+            if self.god_tensor is None:
+                raise ValueError("Must call find_fixed_point first")
+            basis = self.god_tensor[:, None]
+        rows = np.atleast_2d(np.asarray(v, dtype=float))
+        norms = np.linalg.norm(rows, axis=1, keepdims=True)
+        units = np.divide(rows, norms, out=np.zeros_like(rows), where=norms > 0)
+        captured = np.sum((units @ basis) ** 2, axis=1)
+        d = np.sqrt(np.clip(1.0 - captured, 0.0, None))
+        return d if np.ndim(v) > 1 else d[0]
+
+    def _distances_to_god(self) -> tuple[np.ndarray, np.ndarray]:
+        """Distances of the directions T(e_i), T(h_i) to the fixed subspace."""
         assert self.T_matrix is not None
-        e_latent = np.array(
-            [self.projector_e.encode(s.e_embedding) for s in self.samples]
-        )
-        h_latent = np.array(
-            [self.projector_h.encode(s.h_embedding) for s in self.samples]
-        )
-        e_under_T = e_latent @ self.T_matrix.T
-        h_under_T = h_latent @ self.T_matrix.T
-        e_under_T = e_under_T / (
-            np.linalg.norm(e_under_T, axis=1, keepdims=True) + 1e-10
-        )
-        h_under_T = h_under_T / (
-            np.linalg.norm(h_under_T, axis=1, keepdims=True) + 1e-10
-        )
-        return (
-            sign_invariant_distance(e_under_T, god),
-            sign_invariant_distance(h_under_T, god),
-        )
+        out = []
+        for views in (
+            [s.e_embedding for s in self.samples],
+            [s.h_embedding for s in self.samples],
+        ):
+            out.append(self.distance_to_god(np.array(views) @ self.T_matrix.T))
+        return out[0], out[1]
 
     def get_e_to_h_map(self, e_embedding: np.ndarray) -> np.ndarray:
-        """Map an E embedding to its predicted H embedding via T."""
+        """Map an E-view signature to its predicted H-view via T (unit norm)."""
         if self.T_matrix is None:
             raise ValueError("Must call find_fixed_point first")
-        e_latent = self.projector_e.encode(e_embedding)
-        h_latent = e_latent @ self.T_matrix.T
-        # Normalize
-        h_latent = h_latent / (np.linalg.norm(h_latent) + 1e-10)
-        return h_latent
+        h = self.T_matrix @ e_embedding
+        return h / (np.linalg.norm(h) + 1e-10)
 
     def get_h_to_e_map(self, h_embedding: np.ndarray) -> np.ndarray:
-        """Map an H embedding to its predicted E embedding via T⁺.
+        """Map an H-view signature to its predicted E-view via T⁺ (unit norm).
 
         T maps E → H, so the reverse map is its Moore-Penrose pseudo-inverse
-        (the least-squares inverse; T is often rank-deficient). Tᵀ is not an
+        (the least-squares inverse; T is rank-deficient). Tᵀ is not an
         inverse unless T is orthogonal.
         """
         if self.T_matrix is None:
             raise ValueError("Must call find_fixed_point first")
-        h_latent = self.projector_h.encode(h_embedding)
-        e_latent = np.linalg.pinv(self.T_matrix) @ h_latent
-        e_latent = e_latent / (np.linalg.norm(e_latent) + 1e-10)
-        return e_latent
+        e = np.linalg.pinv(self.T_matrix) @ h_embedding
+        return e / (np.linalg.norm(e) + 1e-10)
 
     def god_score(self) -> float:
         """
         Compute the 'god score' — how well the God Tensor unifies E and H.
 
-        Score = exp(-mean(d(T(e_i), god) + d(T(h_i), god)) / 2)
+        Score = exp(-mean(d(T(e_i)) + d(T(h_i))) / 2)
 
-        with d the sign-invariant distance min(||a - g||, ||a + g||): the fixed
-        point is an eigenvector, defined only up to ±1, so the score must not
-        depend on which sign the solver returned.
+        with d the distance of the normalised vector to the fixed subspace
+        (see :meth:`distance_to_god`). It is sign-invariant: an eigenvector is
+        defined only up to ±1. Score 1 ⇔ T maps every E and H signature into
+        the fixed subspace, i.e. E and H are unified by the duality law.
 
         Using an exponential keeps the score bounded in [0, 1] regardless of
         the geometry of the embedding space or the number of samples.
@@ -454,7 +539,7 @@ class GodTensor:
         if self.god_tensor is None:
             return 0.0
 
-        e_dists, h_dists = self._distances_to_god(self.god_tensor)
+        e_dists, h_dists = self._distances_to_god()
         return float(np.exp(-np.mean(e_dists + h_dists) / 2))
 
     def summary(self) -> dict:
@@ -469,7 +554,11 @@ class GodTensor:
             else None,
             "converged": self.fixed_point_converged,
             "fixed_point_eigenvalue": self.fixed_point_eigenvalue,
+            "fixed_point_multiplicity": self.god_basis.shape[1]
+            if self.god_basis is not None
+            else None,
             "contraction_factor": self.contraction_factor,
+            "idempotency_defect": self.idempotency_defect,
             "final_delta": self.convergence_history[-1]["delta"]
             if self.convergence_history
             else None,

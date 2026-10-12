@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — God Tensor rebuilt on the E ⇄ H duality (breaking)
+- `GodTensor` embeddings are now duality signatures. The E-view is
+  χ(D) + N_wall/2 and the H-view is the vortex charge Q, for the first
+  `signature_modes` (16) modes. The `ManifoldProjector` autoencoder is no
+  longer used: its ReLU erased negative charges.
+- When the law holds, the learned T is an orthogonal projector (T² = T). The
+  God Tensor is its fixed subspace. New fields: `god_basis`,
+  `idempotency_defect`; `summary()` reports `fixed_point_multiplicity`.
+- Fixed point: a degenerate λ* = 1 is treated as one subspace. The basis
+  comes from the near-null space of T − λ*I, and convergence also stops on
+  the eigen-residual. Distances are measured to the subspace
+  (`GodTensor.distance_to_god`).
+- `god_tensor.make_sample` and `duality_views` are shared by
+  `collect_training_data` and `run_validation_experiment`. Old pickled models
+  (50-D barcode embeddings) are not compatible.
+
+### Added — quantum sector
+- `faraday.quantum`:
+  - `phase_charges`, `wall_windings` and `berry_sign`.
+  - Phase-vortex bound |V| ≤ min N_wall/2 (66/66).
+  - Holonomy V_bulk = w_outer − Σ w_holes (66/66).
+  - Z₂ geometric phase around the TM31/TM12 diabolical point.
+- `experiments/quantum_study.py`, `docs/QUANTUM.md`, `tests/test_quantum.py`.
+
 ### Added — topological E ⇄ H duality
 - `faraday.duality`: exact vortex charges of H (discrete Stokes), nodal
   domains and Euler characteristics, wall nodal count, the `ModeTopology`

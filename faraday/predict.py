@@ -18,7 +18,7 @@ import numpy as np
 
 from faraday.barcode import coupled_fingerprint
 from faraday.em_solver import CavityGeometry, CavityShape, solve_cavity_modes
-from faraday.god_tensor import GodTensor, sign_invariant_distance
+from faraday.god_tensor import GodTensor
 from faraday.logging import get_logger
 
 log = get_logger(__name__)
@@ -97,12 +97,11 @@ def predict_eh_barcode(
     e_via_gt = gt.get_e_to_h_map(e_interp)  # T(E)  = predicted H
     h_via_gt = gt.get_h_to_e_map(h_interp)  # T⁺(H) = predicted E
 
-    # Sign-invariant distance from the God Tensor (an eigenvector, ±x*)
-    god = gt.god_tensor
-    if god is None:
+    # Distance from the God Tensor's fixed subspace (sign-invariant)
+    if gt.god_tensor is None:
         raise ValueError("Must call find_fixed_point first")
-    god_dist_e = float(sign_invariant_distance(e_via_gt, god))
-    god_dist_h = float(sign_invariant_distance(h_via_gt, god))
+    god_dist_e = float(gt.distance_to_god(e_via_gt))
+    god_dist_h = float(gt.distance_to_god(h_via_gt))
 
     # God Tensor projected fingerprints (for comparison with KNN)
     gt_e_fp = _embed_to_fingerprint(h_via_gt, source="e_via_gt")  # predicted E

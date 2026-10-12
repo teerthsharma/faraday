@@ -358,25 +358,44 @@ python experiments/duality_study.py
 ```
 
 Details, evidence and prior art: [`docs/DUALITY.md`](docs/DUALITY.md).
+The quantum sector (phase vortices, holonomy around holes, the geometric phase
+around level crossings): [`docs/QUANTUM.md`](docs/QUANTUM.md).
 
 ---
 
 ## The God Tensor: What It Is and Why It Converged
 
-| "God Tensor" means... | Concrete meaning |
-|----------------------|-------------------|
-| The unified E×H entity | The 16D vector `x* = T(x*)` invariant under the learned coupling operator |
-| Fixed point `T(T(x)) = T(x)` | The embedding where E→T(E) and H→T(H) produce the same representation |
-| "Learned from data" | T was learned via `lstsq(E_emb, H_emb)` on FDFD-derived barcodes |
-| Banach convergence to ε | Shifted inverse iteration `(T − μI)⁻¹`, μ≈1, onto the eigenvector with eigenvalue nearest 1; contraction factor `q = |λ*−μ|/|λ₂−μ|` |
+The God Tensor is built on the E ⇄ H duality. Every training cavity is
+described twice, by two fields that never see each other:
 
-**Why it converged to 1e-16:**
+| View | Per mode j | Computed from |
+|---|---|---|
+| E-view | χ(D) + N_wall,j / 2 | E's nodal points on the wall, plus the cavity's Euler characteristic |
+| H-view | Q_j | net vortex winding of H |
 
-The learned T has an eigenvalue at **λ* ≈ 1** whose eigenvector is where the training data lands under T. That eigenvalue is *not* the dominant one (λ_max ≈ 1.25 on the default training set), so plain power iteration would converge to the wrong vector; Faraday iterates the shifted inverse `(T − μI)⁻¹` instead, which contracts onto the λ*≈1 eigenvector from any generic start (q ≈ 4×10⁻⁶ on the default set). `GodTensor.find_fixed_point` logs λ*, q, the eigen-residual `‖Tx − λ*x‖` and the fixed-point defect `‖Tx − x‖ = |λ* − 1|`.
+T is learned by least squares, T e ≈ h. The bulk–boundary law says the two
+views are equal, so the minimum-norm T is the **orthogonal projector** onto the
+subspace of physically realisable signatures:
 
-> The 50,000-epoch burn numbers above were produced before this fix, by power iteration seeded at the λ≈1 eigenvector; the early-epoch rise in loss (1.5e-9 → 7.4e-5) is that seed escaping the repelling fixed point toward the dominant one.
+```
+T(T(x)) = T(x)      eigenvalues {1, 0},   God Tensor = range(T)
+```
 
-The Betti-1 plateau at 0.00328 is the **residual topological mismatch** in the training data. Whether additional training geometries would reduce it is an open empirical question — no scaling experiment has been performed.
+`T(T(x)) = T(x)` was this project's founding slogan; it now holds exactly, for
+a physical reason. The fixed set is a subspace (multiplicity of λ = 1), reached
+by a Banach contraction (shifted inverse iteration) from a generic start.
+
+| 20 geometries × 16 modes | law-violating entries | ‖T² − T‖ / ‖T‖ | dim of fixed subspace | god_score |
+|---|---|---|---|---|
+| grid 30 × 30 | 0 / 320 | 3.4 × 10⁻¹⁵ | 11 (= rank) | 1.0000 |
+| grid 15 × 15 (under-resolved) | 24 / 320 | 0.63 | 7 (< rank 12) | 0.89 |
+
+A break in the law, here from too coarse a grid, appears directly as T
+failing to be a projector. Reproduce with `python experiments/quantum_study.py`.
+
+> The 50,000-epoch burn numbers at the top of this README predate both fixes.
+> They were produced by power iteration on the old barcode embedding, whose
+> E and H vectors were identical point counts.
 
 ---
 

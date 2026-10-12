@@ -83,6 +83,10 @@ Geometry → spectrum ordering → wall nodal points → bulk H charge.
   is close to the identity on the data. It encodes no topology.
 - `ModeTopology.signature()` is an embedding that does: integer,
   scale-invariant, with exact constraints between its E side and its H side.
+- `GodTensor` is now built on this. Its E-view is χ(D) + N_wall/2 per mode
+  and its H-view is Q per mode, so the learned T is an exact orthogonal
+  projector (T² = T) whenever the law holds. See the README and
+  `docs/QUANTUM.md`.
 - Only the wall data N_wall (one-dimensional) has to be learned for a new
   geometry. The bulk H topology then follows from the law, and every
   prediction carries a built-in consistency check.
