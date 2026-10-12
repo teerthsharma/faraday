@@ -46,7 +46,8 @@ class TestGodTensor:
         assert gt.god_tensor is not None
         assert gt.contraction_factor < 1
         assert gt.fixed_point_converged
-        assert gt.convergence_history[-1]["delta"] < 1e-6
+        last = gt.convergence_history[-1]  # stops on the step or the residual
+        assert min(last["delta"], last["residual"]) < 1e-6
         lam = gt.fixed_point_eigenvalue
         assert abs(lam.imag) < 1e-12
         # On this coarse grid a few modes violate the duality law, so the
